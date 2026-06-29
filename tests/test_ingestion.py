@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Optional
 
 from xnat_audit.ingestion.dicom_times import compute_session_times, compute_signature
-from xnat_audit.ingestion.queries import extract_archive_session
+from xnat_audit.ingestion.queries import extract_archive_session, extract_prearchive_session
 from xnat_audit.models.enums import SessionOrigin, SessionState
 from xnat_audit.models.scan import Scan
 from xnat_audit.models.session import Session
@@ -102,6 +102,26 @@ class IngestionWorkflowTests(unittest.TestCase):
         self.assertEqual(record["project_id"], "PROJ4")
         self.assertEqual(record["session_id"], "SESSION4")
         self.assertEqual(record["date"], "2026-06-29")
+
+    def test_extract_prearchive_session_handles_attrs_get_errors(self) -> None:
+        class Attrs:
+            def keys(self) -> list[str]:
+                return []
+
+            def get(self, name: str, default: Optional[object] = None) -> Optional[object]:
+                raise IndexError("list index out of range")
+
+        class FakeRaw:
+            def __init__(self) -> None:
+                self.attrs = Attrs()
+                self.id = "SESSION5"
+
+        record = extract_prearchive_session(FakeRaw())
+
+        self.assertIsNotNone(record)
+        self.assertEqual(record["session_id"], "SESSION5")
+        self.assertEqual(record["subject_id"], "")
+        self.assertEqual(record["project_id"], "")
 
 
 if __name__ == "__main__":

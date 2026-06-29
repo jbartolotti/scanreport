@@ -7,7 +7,7 @@ from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
-from xnat_audit.cli.main import main
+from xnat_audit.cli.main import build_parser, main
 from xnat_audit.config.config import load_settings
 
 
@@ -66,6 +66,12 @@ class ConfigCliTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertTrue(Path(tmp_dir, "cache", "session_times.db").exists())
             self.assertIn("Initializing SQLite cache", stdout.getvalue())
+
+    def test_build_parser_accepts_verbose_flag(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["--verbose", "config.json"])
+
+        self.assertTrue(args.verbose)
 
 
 if __name__ == "__main__":

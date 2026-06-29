@@ -16,21 +16,41 @@ from ..storage.sqlite_store import SessionTimeStore
 logger = logging.getLogger("xnat_audit")
 
 
+def configure_logging(verbose: bool = False, quiet: bool = False) -> None:
+    """Configure application logging level from CLI flags."""
+    if quiet:
+        level = logging.WARNING
+    elif verbose:
+        level = logging.DEBUG
+    else:
+        level = logging.INFO
+
+    root_logger = logging.getLogger()
+    if not root_logger.handlers:
+        logging.basicConfig(level=level, format="%(levelname)s:%(name)s:%(message)s")
+    else:
+        root_logger.setLevel(level)
+        for handler in root_logger.handlers:
+            handler.setLevel(level)
+
+    logger.setLevel(level)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Create the CLI argument parser."""
     parser = argparse.ArgumentParser(prog="python -m xnat_audit")
     parser.add_argument("config_path", nargs="?", default=None, help="Path to a JSON config file (defaults to ./config.json)")
     parser.add_argument("--date", default=None, help="Target date for the audit run (YYYY-MM-DD)")
+    parser.add_argument("--verbose", action="store_true", help="Enable debug logging, including detailed SQLite step logs")
+    parser.add_argument("--quiet", action="store_true", help="Suppress informational messages and only show warnings/errors")
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the CLI workflow."""
-    if not logger.handlers:
-        logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
-
     parser = build_parser()
     args = parser.parse_args(argv)
+    configure_logging(verbose=args.verbose, quiet=args.quiet)
 
     config_path = args.config_path
     if config_path is None:
@@ -57,7 +77,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"[xnat_audit] Initializing SQLite cache at {db_path}")
     logger.info("Initializing SQLite cache at %s", db_path)
     try:
-        store = SessionTimeStore(str(db_path))
+        store = SessionTimeStore(str(db_path), verbose=args.verbose)
     except sqlite3.OperationalError as exc:
         print(f"[xnat_audit] SQLite initialization failed: {exc}")
         logger.exception("SQLite initialization failed for %s", db_path)

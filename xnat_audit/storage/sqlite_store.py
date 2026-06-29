@@ -18,8 +18,9 @@ logger = logging.getLogger(__name__)
 class SessionTimeStore:
     """Persist session timing metadata in a local SQLite database."""
 
-    def __init__(self, db_path: str) -> None:
+    def __init__(self, db_path: str, verbose: bool = False) -> None:
         self.db_path = Path(db_path).expanduser()
+        self.verbose = verbose
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         logger.info("Opening SQLite database at %s (pid=%s)", self.db_path, os.getpid())
         self.connection = self._connect_with_retry()
@@ -159,9 +160,11 @@ class SessionTimeStore:
             self.connection = None
 
     def _log_step(self, step: str, attempt: int) -> None:
-        """Emit a timestamped step log with process/thread context."""
+        """Emit a timestamped step log with process/thread context when verbose logging is enabled."""
+        if not self.verbose:
+            return
         timestamp = datetime.now(timezone.utc).isoformat()
-        logger.error(
+        logger.debug(
             "[pid=%s][thread=%s][ts=%s][path=%s][attempt=%d] %s",
             os.getpid(),
             threading.get_ident(),

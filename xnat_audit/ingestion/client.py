@@ -63,7 +63,11 @@ class XNATClient:
             for project in project_items:
                 experiments = self._safe_call(getattr(project, "experiments", None))
                 for item in experiments:
-                    record = extract_archive_session(item)
+                    try:
+                        record = extract_archive_session(item)
+                    except Exception as exc:  # pragma: no cover - depends on runtime environment
+                        logger.warning("Skipping archive item due to extraction error: %s", exc)
+                        continue
                     if record is not None:
                         rows.append(record)
             print(f"[xnat_audit] Retrieved {len(rows)} archive session(s)")
@@ -83,7 +87,11 @@ class XNATClient:
             rows: list[dict[str, Any]] = []
             print(f"[xnat_audit] Inspecting {len(candidates)} prearchive candidate item(s)")
             for item in candidates:
-                record = extract_prearchive_session(item)
+                try:
+                    record = extract_prearchive_session(item)
+                except Exception as exc:  # pragma: no cover - depends on runtime environment
+                    logger.warning("Skipping prearchive item due to extraction error: %s", exc)
+                    continue
                 if record is not None:
                     rows.append(record)
             print(f"[xnat_audit] Retrieved {len(rows)} prearchive session(s)")

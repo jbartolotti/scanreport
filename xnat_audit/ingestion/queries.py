@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Any
 
 from ..models.enums import SessionOrigin, SessionState
+
+logger = logging.getLogger(__name__)
 
 
 def _coerce_date(value: Any) -> str | None:
@@ -43,8 +46,12 @@ def _coerce_scans(raw: Any) -> list[dict[str, Any]]:
 def _read_attribute(raw: Any, attrs: Any, *names: str) -> Any:
     """Read a field from either the object itself or a mapping-like attrs container."""
     for name in names:
-        if hasattr(raw, name):
+        try:
             value = getattr(raw, name)
+        except Exception:
+            value = None
+
+        if value is not None and value != "":
             if callable(value):
                 try:
                     value = value()
@@ -55,13 +62,37 @@ def _read_attribute(raw: Any, attrs: Any, *names: str) -> Any:
 
         if isinstance(attrs, dict):
             if name in attrs:
-                value = attrs[name]
+                try:
+                    value = attrs[name]
+                except Exception as exc:
+                    logger.debug("Unable to read attrs[%s]: %s", name, exc)
+                    value = None
                 if value not in (None, ""):
                     return value
-        elif hasattr(attrs, "get"):
+            continue
+
+        if hasattr(attrs, "keys"):
+            try:
+                keys = attrs.keys()
+            except Exception as exc:
+                logger.debug("Unable to inspect attrs keys for %s: %s", name, exc)
+                keys = None
+
+            if keys is not None and name in keys:
+                try:
+                    value = attrs[name]
+                except Exception as exc:
+                    logger.debug("Unable to read attrs[%s]: %s", name, exc)
+                    value = None
+                if value not in (None, ""):
+                    return value
+            continue
+
+        if hasattr(attrs, "get"):
             try:
                 value = attrs.get(name)
-            except TypeError:
+            except Exception as exc:
+                logger.debug("pyxnat attrs lookup failed for %s: %s", name, exc)
                 value = None
             if value not in (None, ""):
                 return value
