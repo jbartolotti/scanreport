@@ -5,9 +5,15 @@ from __future__ import annotations
 import logging
 import netrc
 import time
+import traceback
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlparse
+
+try:
+    import requests
+except ImportError:  # pragma: no cover - exercised when requests is unavailable.
+    requests = None  # type: ignore[assignment]
 
 try:
     from pyxnat import Interface
@@ -20,6 +26,7 @@ from .dicom_times import compute_session_times, compute_signature
 from .queries import extract_archive_session, extract_prearchive_session
 
 logger = logging.getLogger(__name__)
+REQUEST_LOGGING_INSTALLED = False
 
 
 class XNATClient:
@@ -37,6 +44,15 @@ class XNATClient:
         self.password = password
         self.lookback_days = lookback_days
         self.interface: Any | None = None
+        self.request_metrics: dict[str, int] = {
+            "total_http_requests": 0,
+            "experiment_requests": 0,
+            "search_requests": 0,
+            "direct_experiment_queries": 0,
+            "project_fallback_queries": 0,
+            "project_fallback_skipped": 0,
+        }
+        self._install_request_logging()
 
     def connect(self) -> Any:
         """Authenticate using .netrc or provided credentials."""
@@ -61,6 +77,61 @@ class XNATClient:
             print(f"[xnat_audit] XNAT connection failed: {exc}")
             raise RuntimeError(f"Unable to connect to XNAT at {self.base_url}") from exc
 
+    def _install_request_logging(self) -> None:
+        """Patch requests so XNAT traffic is visible with stack traces for debugging."""
+        global REQUEST_LOGGING_INSTALLED
+        if REQUEST_LOGGING_INSTALLED or requests is None:
+            return
+
+        try:
+            from requests.sessions import Session as RequestsSession
+        except Exception:
+            return
+
+        original_send = RequestsSession.send
+        if getattr(RequestsSession, "__xnat_audit_wrapped__", False):
+            REQUEST_LOGGING_INSTALLED = True
+            return
+
+        def wrapped_send(session: Any, request: Any, **kwargs: Any) -> Any:
+            method = getattr(request, "method", "GET") or "GET"
+            url = getattr(request, "url", "") or ""
+            self.request_metrics["total_http_requests"] += 1
+
+            if "/data/experiments" in url:
+                self.request_metrics["experiment_requests"] += 1
+                logger.warning("XNAT experiments request: %s %s", method, url)
+                print(f"[xnat_audit] Issuing experiments request: {method} {url}")
+                traceback.print_stack(limit=12)
+            if "/data/search" in url:
+                self.request_metrics["search_requests"] += 1
+                logger.warning("XNAT search request: %s %s", method, url)
+                print(f"[xnat_audit] Issuing search request: {method} {url}")
+
+            try:
+                response = original_send(session, request, **kwargs)
+            except Exception as exc:
+                if "/data/search" in url:
+                    logger.exception("Search request failed for %s", url)
+                else:
+                    logger.exception("XNAT request failed for %s", url)
+                raise exc
+
+            if "/data/search" in url and getattr(response, "status_code", None) and response.status_code >= 400:
+                body = getattr(response, "text", "") or ""
+                logger.error("Search request failed with %s for %s", response.status_code, url)
+                logger.error("Search request payload: %s", getattr(request, "body", None))
+                logger.error("Search response body: %s", body)
+                print(f"[xnat_audit] Search request failed [{response.status_code}] {url}")
+                print(f"[xnat_audit] Search response body: {body}")
+                print(f"[xnat_audit] Search request payload: {getattr(request, 'body', None)}")
+
+            return response
+
+        RequestsSession.send = wrapped_send  # type: ignore[assignment]
+        RequestsSession.__xnat_audit_wrapped__ = True  # type: ignore[attr-defined]
+        REQUEST_LOGGING_INSTALLED = True
+
     def get_archive_sessions(self, start_date: str, end_date: str) -> list[dict[str, Any]]:
         """Fetch sessions from the XNAT archive for the requested date range."""
         interface = self.connect()
@@ -69,13 +140,16 @@ class XNATClient:
             project_items = self._list_collection(interface.select, "projects")
             projects_found = len(project_items)
             print(f"[xnat_audit] Found {projects_found} project container(s) for archive query")
+            for index, project in enumerate(project_items, start=1):
+                project_id = self._read_project_id(project)
+                print(f"[xnat_audit] Project[{index}/{projects_found}] {project_id}")
+                logger.info("Archive project[%d/%d] project_id=%s", index, projects_found, project_id)
 
             experiment_items, used_direct_query = self._query_archive_experiments(interface, start_date, end_date)
             if not experiment_items and projects_found:
-                experiment_items = []
-                for project in project_items:
-                    experiments = self._safe_call(getattr(project, "experiments", None))
-                    experiment_items.extend(experiments)
+                self.request_metrics["project_fallback_skipped"] += 1
+                print("[xnat_audit] Direct experiment query returned no candidates; skipping project-by-project expansion to avoid repeated requests")
+                logger.warning("Direct experiment query returned no candidates; skipping project-by-project expansion")
                 used_direct_query = False
 
             examined_count = len(experiment_items)
@@ -97,10 +171,18 @@ class XNATClient:
             elapsed = time.perf_counter() - started_at
             current_requests = 1 + projects_found
             optimized_requests = 2 if used_direct_query else 1 + projects_found
+            query_path = "direct_query" if used_direct_query else "project_fallback_skipped"
             print(
                 "[xnat_audit] Archive query diagnostics: "
                 f"projects_found={projects_found}, experiments_examined={examined_count}, "
                 f"experiments_retained={retained_count}, api_query_time={elapsed:.3f}s"
+            )
+            print(
+                "[xnat_audit] Archive request report: "
+                f"total_http_requests={self.request_metrics['total_http_requests']}, "
+                f"experiment_requests={self.request_metrics['experiment_requests']}, "
+                f"search_requests={self.request_metrics['search_requests']}, "
+                f"query_path={query_path}"
             )
             print(
                 "[xnat_audit] Archive query REST request estimate: "
@@ -112,6 +194,13 @@ class XNATClient:
                 examined_count,
                 retained_count,
                 elapsed,
+            )
+            logger.info(
+                "Archive request report: total_http_requests=%d experiment_requests=%d search_requests=%d query_path=%s",
+                self.request_metrics["total_http_requests"],
+                self.request_metrics["experiment_requests"],
+                self.request_metrics["search_requests"],
+                query_path,
             )
             print(f"[xnat_audit] Retrieved {len(retained_rows)} archive session(s)")
             return retained_rows
@@ -192,10 +281,10 @@ class XNATClient:
         except TypeError:
             return [], False
 
+        self.request_metrics["direct_experiment_queries"] += 1
+
         if value is None:
             return [], True
-
-        value = self._apply_date_constraints(value, start_date, end_date)
 
         if isinstance(value, list):
             return value, True
@@ -207,27 +296,20 @@ class XNATClient:
 
         return items, True
 
-    def _apply_date_constraints(self, value: Any, start_date: str, end_date: str) -> Any:
-        """Best-effort use of pyxnat's native filtering hooks when available."""
-        for method_name in ("where", "search", "filter"):
-            method = getattr(value, method_name, None)
-            if not callable(method):
-                continue
-            for args, kwargs in (
-                ((start_date, end_date), {}),
-                ((start_date,), {}),
-                ((), {"start_date": start_date, "end_date": end_date}),
-                ((), {"from_date": start_date, "to_date": end_date}),
-            ):
-                try:
-                    result = method(*args, **kwargs)
-                except TypeError:
-                    continue
-                except Exception:
-                    continue
-                if result is not None:
-                    return result
-        return value
+    def _read_project_id(self, project: Any) -> str:
+        """Best-effort extraction of a project identifier from a project container."""
+        for candidate in (getattr(project, "id", None), getattr(project, "label", None)):
+            if candidate:
+                return str(candidate)
+        attrs = getattr(project, "attrs", None)
+        if attrs is not None and hasattr(attrs, "get"):
+            try:
+                value = attrs.get("ID") or attrs.get("id") or attrs.get("project_id")
+            except Exception:
+                value = None
+            if value:
+                return str(value)
+        return "<unknown>"
 
     def _is_in_archive_window(self, item: Any, start_date: str, end_date: str) -> bool:
         """Return True when an experiment is inside the requested date window and not older than the lookback cutoff."""

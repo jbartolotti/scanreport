@@ -150,6 +150,34 @@ class IngestionWorkflowTests(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["session_id"], "SESSION_RECENT")
 
+    def test_get_archive_sessions_skips_project_fallback_when_direct_query_is_empty(self) -> None:
+        class FakeProject:
+            def __init__(self) -> None:
+                self.experiments_calls = 0
+
+            def experiments(self) -> list[object]:
+                self.experiments_calls += 1
+                return []
+
+        class FakeSelector:
+            def __init__(self, projects: list[FakeProject]) -> None:
+                self._projects = projects
+
+            def experiments(self) -> list[object]:
+                return []
+
+            def projects(self) -> list[FakeProject]:
+                return self._projects
+
+        projects = [FakeProject(), FakeProject(), FakeProject()]
+        client = XNATClient("https://example.test", lookback_days=365)
+        client.connect = lambda: type("Interface", (), {"select": FakeSelector(projects)})()  # type: ignore[assignment]
+
+        records = client.get_archive_sessions("2026-01-01", "2026-06-30")
+
+        self.assertEqual(records, [])
+        self.assertTrue(all(project.experiments_calls == 0 for project in projects))
+
 
 if __name__ == "__main__":
     unittest.main()
