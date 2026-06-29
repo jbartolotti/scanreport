@@ -4,6 +4,7 @@ from datetime import date
 from pathlib import Path
 from typing import Optional
 
+from xnat_audit.ingestion.client import XNATClient
 from xnat_audit.ingestion.dicom_times import compute_session_times, compute_signature
 from xnat_audit.ingestion.queries import extract_archive_session, extract_prearchive_session
 from xnat_audit.models.enums import SessionOrigin, SessionState
@@ -122,6 +123,32 @@ class IngestionWorkflowTests(unittest.TestCase):
         self.assertEqual(record["session_id"], "SESSION5")
         self.assertEqual(record["subject_id"], "")
         self.assertEqual(record["project_id"], "")
+
+    def test_get_archive_sessions_filters_before_expansion(self) -> None:
+        class FakeSelector:
+            def __init__(self, items: list[object]) -> None:
+                self._items = items
+
+            def experiments(self) -> list[object]:
+                return self._items
+
+            def projects(self) -> list[object]:
+                return []
+
+        class FakeExperiment:
+            def __init__(self, session_id: str, date_value: str) -> None:
+                self.id = session_id
+                self.attrs = {"subject_id": "SUBJ", "project_id": "PROJ", "date": date_value}
+
+        recent = FakeExperiment("SESSION_RECENT", "2026-06-29")
+        old = FakeExperiment("SESSION_OLD", "2025-01-01")
+        client = XNATClient("https://example.test", lookback_days=365)
+        client.connect = lambda: type("Interface", (), {"select": FakeSelector([recent, old])})()  # type: ignore[assignment]
+
+        records = client.get_archive_sessions("2026-01-01", "2026-06-30")
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["session_id"], "SESSION_RECENT")
 
 
 if __name__ == "__main__":

@@ -91,7 +91,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     print(f"[xnat_audit] Connecting to XNAT at {settings.xnat_url}")
     logger.info("Connecting to XNAT at %s", settings.xnat_url)
-    client = XNATClient(settings.xnat_url)
+    client = XNATClient(settings.xnat_url, lookback_days=settings.lookback_days)
     try:
         client.connect()
     except Exception as exc:  # pragma: no cover - depends on runtime environment
