@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import logging
 import netrc
 import time
@@ -48,6 +50,8 @@ class XNATClient:
             "total_http_requests": 0,
             "experiment_requests": 0,
             "search_requests": 0,
+            "flat_metadata_queries": 0,
+            "detailed_experiment_requests": 0,
             "direct_experiment_queries": 0,
             "project_fallback_queries": 0,
             "project_fallback_skipped": 0,
@@ -133,49 +137,42 @@ class XNATClient:
         REQUEST_LOGGING_INSTALLED = True
 
     def get_archive_sessions(self, start_date: str, end_date: str) -> list[dict[str, Any]]:
-        """Fetch sessions from the XNAT archive for the requested date range."""
+        """Fetch archive sessions using one flat metadata query and lookback filtering before detail fetches."""
         interface = self.connect()
         started_at = time.perf_counter()
         try:
-            project_items = self._list_collection(interface.select, "projects")
-            projects_found = len(project_items)
-            print(f"[xnat_audit] Found {projects_found} project container(s) for archive query")
-            for index, project in enumerate(project_items, start=1):
-                project_id = self._read_project_id(project)
-                print(f"[xnat_audit] Project[{index}/{projects_found}] {project_id}")
-                logger.info("Archive project[%d/%d] project_id=%s", index, projects_found, project_id)
+            experiment_rows, used_flat_query = self._query_archive_experiments(interface, start_date, end_date)
+            discovered_count = len(experiment_rows)
+            lookback_cutoff = date.today() - timedelta(days=self.lookback_days)
+            surviving_rows: list[dict[str, Any]] = []
 
-            experiment_items, used_direct_query = self._query_archive_experiments(interface, start_date, end_date)
-            if not experiment_items and projects_found:
-                self.request_metrics["project_fallback_skipped"] += 1
-                print("[xnat_audit] Direct experiment query returned no candidates; skipping project-by-project expansion to avoid repeated requests")
-                logger.warning("Direct experiment query returned no candidates; skipping project-by-project expansion")
-                used_direct_query = False
-
-            examined_count = len(experiment_items)
-            retained_rows: list[dict[str, Any]] = []
-            retained_count = 0
-
-            for item in experiment_items:
-                if not self._is_in_archive_window(item, start_date, end_date):
+            for row in experiment_rows:
+                row_date = self._coerce_date(str(row.get("date", "")) if row.get("date") is not None else None)
+                if row_date is None:
                     continue
-                retained_count += 1
-                try:
-                    record = extract_archive_session(item)
-                except Exception as exc:  # pragma: no cover - depends on runtime environment
-                    logger.warning("Skipping archive item due to extraction error: %s", exc)
+                if row_date < lookback_cutoff:
                     continue
+                surviving_rows.append(row)
+
+            processed_rows: list[dict[str, Any]] = []
+            fully_processed_count = 0
+            for row in surviving_rows:
+                detail = self._fetch_experiment_details(interface, row.get("id"))
+                self.request_metrics["detailed_experiment_requests"] += 1
+                record = self._build_archive_record(row, detail)
                 if record is not None:
-                    retained_rows.append(record)
+                    processed_rows.append(record)
+                    fully_processed_count += 1
 
             elapsed = time.perf_counter() - started_at
-            current_requests = 1 + projects_found
-            optimized_requests = 2 if used_direct_query else 1 + projects_found
-            query_path = "direct_query" if used_direct_query else "project_fallback_skipped"
+            distinct_projects = len({str(row.get("project", "")).strip() for row in experiment_rows if row.get("project")})
+            before_requests = 1 + max(1, distinct_projects)
+            after_requests = 1 + max(1, len(surviving_rows))
+            query_path = "flat_metadata_query" if used_flat_query else "fallback_metadata_list"
             print(
                 "[xnat_audit] Archive query diagnostics: "
-                f"projects_found={projects_found}, experiments_examined={examined_count}, "
-                f"experiments_retained={retained_count}, api_query_time={elapsed:.3f}s"
+                f"experiments_discovered={discovered_count}, experiments_surviving_lookback={len(surviving_rows)}, "
+                f"experiments_fully_processed={fully_processed_count}, api_query_time={elapsed:.3f}s"
             )
             print(
                 "[xnat_audit] Archive request report: "
@@ -185,14 +182,14 @@ class XNATClient:
                 f"query_path={query_path}"
             )
             print(
-                "[xnat_audit] Archive query REST request estimate: "
-                f"current={current_requests}, optimized={optimized_requests}"
+                "[xnat_audit] Archive REST request estimate: "
+                f"before_refactor={before_requests}, after_refactor={after_requests}"
             )
             logger.info(
-                "Archive query diagnostics: projects_found=%d experiments_examined=%d experiments_retained=%d api_query_time=%.3fs",
-                projects_found,
-                examined_count,
-                retained_count,
+                "Archive query diagnostics: experiments_discovered=%d experiments_surviving_lookback=%d experiments_fully_processed=%d api_query_time=%.3fs",
+                discovered_count,
+                len(surviving_rows),
+                fully_processed_count,
                 elapsed,
             )
             logger.info(
@@ -202,8 +199,8 @@ class XNATClient:
                 self.request_metrics["search_requests"],
                 query_path,
             )
-            print(f"[xnat_audit] Retrieved {len(retained_rows)} archive session(s)")
-            return retained_rows
+            print(f"[xnat_audit] Retrieved {len(processed_rows)} archive session(s)")
+            return processed_rows
         except Exception as exc:  # pragma: no cover - depends on runtime environment
             logger.exception("Archive session query failed")
             print(f"[xnat_audit] Archive query failed: {exc}")
@@ -266,8 +263,14 @@ class XNATClient:
         except TypeError:
             return [value]
 
-    def _query_archive_experiments(self, interface: Any, start_date: str, end_date: str) -> tuple[list[Any], bool]:
-        """Fetch archive experiment candidates, preferring a direct experiments query over project iteration."""
+    def _query_archive_experiments(self, interface: Any, start_date: str, end_date: str) -> tuple[list[dict[str, Any]], bool]:
+        """Fetch archive experiment candidates using a flat metadata query when available."""
+        metadata_rows = self._fetch_flat_experiment_metadata(start_date, end_date)
+        if metadata_rows is not None:
+            self.request_metrics["flat_metadata_queries"] += 1
+            return metadata_rows, True
+
+        self.request_metrics["project_fallback_queries"] += 1
         selector = getattr(interface, "select", None)
         if selector is None:
             return [], False
@@ -287,14 +290,183 @@ class XNATClient:
             return [], True
 
         if isinstance(value, list):
-            return value, True
+            items = value
+        else:
+            try:
+                items = list(value)
+            except TypeError:
+                items = [value]
+
+        metadata: list[dict[str, Any]] = []
+        for item in items:
+            row = self._metadata_from_experiment_item(item)
+            if row is not None:
+                metadata.append(row)
+        return metadata, False
+
+    def _fetch_flat_experiment_metadata(self, start_date: str, end_date: str) -> list[dict[str, Any]] | None:
+        """Request experiment metadata once as a flat CSV payload and return normalized rows."""
+        if requests is None:
+            return None
+
+        username, password = self._load_credentials()
+        session = requests.Session()
+        if username and password:
+            session.auth = (username, password)
+
+        params = {
+            "columns": "ID,project,label,date",
+            "format": "csv",
+            "xsiType": "xnat:mrSessionData",
+        }
+
+        url = f"{self.base_url}/data/experiments"
+        try:
+            response = session.get(url, params=params, timeout=30)
+            response.raise_for_status()
+        except Exception as exc:
+            logger.warning("Flat metadata query failed; falling back to item iteration: %s", exc)
+            return None
+
+        text = getattr(response, "text", "") or ""
+        if not text.strip():
+            return []
+
+        rows: list[dict[str, Any]] = []
+        reader = csv.DictReader(io.StringIO(text))
+        for raw_row in reader:
+            row = self._normalize_metadata_row(raw_row)
+            if row is not None:
+                rows.append(row)
+        return rows
+
+    def _normalize_metadata_row(self, raw_row: dict[str, Any]) -> dict[str, Any] | None:
+        """Convert a flat CSV row into a normalized archive-metadata dictionary."""
+        if not raw_row:
+            return None
+        row_id = self._first_non_empty(raw_row, ["ID", "id", "session_id", "Session ID"])
+        if row_id is None:
+            return None
+        project = self._first_non_empty(raw_row, ["project", "Project", "project_id", "Project ID"])
+        label = self._first_non_empty(raw_row, ["label", "Label"])
+        date_value = self._first_non_empty(raw_row, ["date", "Date", "session_date", "Session Date"])
+        return {
+            "id": str(row_id),
+            "project": str(project) if project is not None else "",
+            "label": str(label) if label is not None else "",
+            "date": str(date_value) if date_value is not None else "",
+        }
+
+    def _first_non_empty(self, row: dict[str, Any], names: list[str]) -> Any | None:
+        """Return the first non-empty value from a row for the supplied column names."""
+        for name in names:
+            value = row.get(name)
+            if value is None:
+                continue
+            value = str(value).strip()
+            if value:
+                return value
+        return None
+
+    def _metadata_from_experiment_item(self, item: Any) -> dict[str, Any] | None:
+        """Extract archive metadata from a pyxnat-like experiment item without filtering on object attributes."""
+        if item is None:
+            return None
+        if isinstance(item, dict):
+            record_id = item.get("id") or item.get("session_id")
+            if record_id is None:
+                return None
+            return {
+                "id": str(record_id),
+                "project": str(item.get("project", "") or item.get("project_id", "") or ""),
+                "label": str(item.get("label", "") or ""),
+                "date": str(item.get("date", "") or ""),
+            }
+
+        attrs = getattr(item, "attrs", None)
+        if attrs is not None and hasattr(attrs, "get"):
+            try:
+                record_id = attrs.get("ID") or attrs.get("id")
+            except Exception:
+                record_id = None
+            if record_id is None:
+                record_id = getattr(item, "id", None)
+            project = None
+            label = None
+            date_value = None
+            try:
+                project = attrs.get("project") or attrs.get("project_id")
+                label = attrs.get("label")
+                date_value = attrs.get("date")
+            except Exception:
+                project = None
+                label = None
+                date_value = None
+            if record_id is None:
+                return None
+            return {
+                "id": str(record_id),
+                "project": str(project) if project is not None else "",
+                "label": str(label) if label is not None else "",
+                "date": str(date_value) if date_value is not None else "",
+            }
+
+        record_id = getattr(item, "id", None)
+        if record_id is None:
+            return None
+        return {
+            "id": str(record_id),
+            "project": "",
+            "label": "",
+            "date": "",
+        }
+
+    def _fetch_experiment_details(self, interface: Any, experiment_id: Any) -> dict[str, Any] | None:
+        """Fetch a single experiment's detailed metadata for surviving sessions."""
+        if experiment_id is None:
+            return None
+        if requests is None:
+            return None
+
+        username, password = self._load_credentials()
+        session = requests.Session()
+        if username and password:
+            session.auth = (username, password)
+        url = f"{self.base_url}/data/experiments/{experiment_id}?format=json"
+        try:
+            response = session.get(url, timeout=30)
+            response.raise_for_status()
+        except Exception as exc:
+            logger.warning("Detailed experiment fetch failed for %s: %s", experiment_id, exc)
+            return None
 
         try:
-            items = list(value)
-        except TypeError:
-            return [value], True
+            payload = response.json()
+        except Exception:
+            payload = None
+        if isinstance(payload, dict):
+            return payload
+        return None
 
-        return items, True
+    def _build_archive_record(self, row: dict[str, Any], detail: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Construct a normalized archive record from a flat metadata row and optional detail payload."""
+        experiment_id = row.get("id")
+        if experiment_id is None:
+            return None
+        detail_project = None
+        detail_subject = None
+        if isinstance(detail, dict):
+            detail_project = detail.get("project") or detail.get("project_id")
+            detail_subject = detail.get("subject_id") or detail.get("subject")
+        return {
+            "session_id": str(experiment_id),
+            "subject_id": str(detail_subject) if detail_subject is not None else "",
+            "project_id": str(detail_project or row.get("project", "")),
+            "date": str(row.get("date", "") or ""),
+            "label": str(row.get("label", "") or ""),
+            "origin": "INTERNAL",
+            "state": "ARCHIVED",
+        }
 
     def _read_project_id(self, project: Any) -> str:
         """Best-effort extraction of a project identifier from a project container."""
