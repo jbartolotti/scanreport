@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-@dataclass(slots=True)
+@dataclass
 class ScanProfile:
     """Represents the historical fingerprint of expected sequences for a project."""
 

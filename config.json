@@ -1,0 +1,7 @@
+{
+  "xnat_url": "https://your-xnat-host",
+  "sqlite_db_path": "./data/session_times.db",
+  "lookback_days": 30,
+  "netrc_host": "xnat",
+  "date_window_days": 7
+}

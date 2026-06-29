@@ -52,6 +52,14 @@ Scheduling data is not yet reliable because iLab integration is not available. T
 
 ## Example usage
 
+Run with an explicit config file:
+
 ```bash
-python -m xnat_audit --date 2026-06-29
+python -m xnat_audit config.json --date 2026-06-29
+```
+
+If no config file is supplied, the CLI will look for a local config.json in the current working directory and use today’s date by default:
+
+```bash
+python -m xnat_audit
 ```
