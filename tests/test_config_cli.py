@@ -52,6 +52,21 @@ class ConfigCliTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertIn(date.today().strftime("%Y-%m-%d"), stdout.getvalue())
 
+    def test_main_initializes_sqlite_cache_when_config_supplied(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "config.json"
+            config_path.write_text(
+                json.dumps({"xnat_url": "https://example.test", "sqlite_db_path": str(Path(tmp_dir) / "cache" / "session_times.db")}),
+                encoding="utf-8",
+            )
+
+            with patch("sys.stdout", new_callable=io.StringIO) as stdout:
+                exit_code = main([str(config_path)])
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(Path(tmp_dir, "cache", "session_times.db").exists())
+            self.assertIn("Initializing SQLite cache", stdout.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

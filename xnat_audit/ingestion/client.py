@@ -39,15 +39,18 @@ class XNATClient:
             raise RuntimeError("pyxnat is required to connect to XNAT")
 
         username, password = self._load_credentials()
+        print(f"[xnat_audit] Authenticating to XNAT with {'netrc' if username and password else 'anonymous'} credentials")
         try:
             if username and password:
                 self.interface = Interface(server=self.base_url, user=username, password=password)
             else:
                 self.interface = Interface(server=self.base_url)
             logger.info("Connected to XNAT at %s", self.base_url)
+            print(f"[xnat_audit] Connected to XNAT at {self.base_url}")
             return self.interface
         except Exception as exc:  # pragma: no cover - depends on runtime environment
             logger.exception("XNAT connection failed for %s", self.base_url)
+            print(f"[xnat_audit] XNAT connection failed: {exc}")
             raise RuntimeError(f"Unable to connect to XNAT at {self.base_url}") from exc
 
     def get_archive_sessions(self, start_date: str, end_date: str) -> list[dict[str, Any]]:
@@ -56,15 +59,18 @@ class XNATClient:
         try:
             project_items = self._list_collection(interface.select, "projects")
             rows: list[dict[str, Any]] = []
+            print(f"[xnat_audit] Found {len(project_items)} project container(s) for archive query")
             for project in project_items:
                 experiments = self._safe_call(getattr(project, "experiments", None))
                 for item in experiments:
                     record = extract_archive_session(item)
                     if record is not None:
                         rows.append(record)
+            print(f"[xnat_audit] Retrieved {len(rows)} archive session(s)")
             return rows
         except Exception as exc:  # pragma: no cover - depends on runtime environment
             logger.exception("Archive session query failed")
+            print(f"[xnat_audit] Archive query failed: {exc}")
             return []
 
     def get_prearchive_sessions(self, start_date: str, end_date: str) -> list[dict[str, Any]]:
@@ -75,13 +81,16 @@ class XNATClient:
             for attr_name in ("prearchive", "sessions", "experiments"):
                 candidates.extend(self._list_collection(interface.select, attr_name))
             rows: list[dict[str, Any]] = []
+            print(f"[xnat_audit] Inspecting {len(candidates)} prearchive candidate item(s)")
             for item in candidates:
                 record = extract_prearchive_session(item)
                 if record is not None:
                     rows.append(record)
+            print(f"[xnat_audit] Retrieved {len(rows)} prearchive session(s)")
             return rows
         except Exception as exc:  # pragma: no cover - depends on runtime environment
             logger.exception("Prearchive session query failed")
+            print(f"[xnat_audit] Prearchive query failed: {exc}")
             return []
 
     def _load_credentials(self) -> tuple[str | None, str | None]:
