@@ -104,12 +104,12 @@ class XNATClient:
 
             if "/data/experiments" in url:
                 self.request_metrics["experiment_requests"] += 1
-                logger.warning("XNAT experiments request: %s %s", method, url)
+                logger.debug("XNAT experiments request: %s %s", method, url)
                 print(f"[xnat_audit] Issuing experiments request: {method} {url}")
-                traceback.print_stack(limit=12)
+                #traceback.print_stack(limit=12)
             if "/data/search" in url:
                 self.request_metrics["search_requests"] += 1
-                logger.warning("XNAT search request: %s %s", method, url)
+                logger.debug("XNAT search request: %s %s", method, url)
                 print(f"[xnat_audit] Issuing search request: {method} {url}")
 
             try:
@@ -212,6 +212,9 @@ class XNATClient:
         try:
             candidates = []
             for attr_name in ("prearchive", "sessions", "experiments"):
+                print(
+                    f"{attr_name}: {len(items)} candidates"
+                )
                 candidates.extend(self._list_collection(interface.select, attr_name))
             rows: list[dict[str, Any]] = []
             print(f"[xnat_audit] Inspecting {len(candidates)} prearchive candidate item(s)")
