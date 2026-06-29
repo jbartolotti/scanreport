@@ -1,0 +1,4 @@
+"""Initial scaffold for the XNAT audit package."""
+
+__all__ = ["__version__"]
+__version__ = "0.1.0"
