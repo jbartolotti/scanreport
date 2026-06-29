@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Production-quality scaffolding for auditing MRI scans from XNAT repositories"
 readme = "README.md"
 requires-python = ">=3.9"
-dependencies = ["pyxnat>=0.6"]
+dependencies = ["pyxnat>=0.6", "nibabel","pandas"]
 
 [tool.setuptools.packages.find]
 include = ["xnat_audit*"]

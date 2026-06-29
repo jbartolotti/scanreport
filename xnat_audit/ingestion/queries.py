@@ -40,6 +40,35 @@ def _coerce_scans(raw: Any) -> list[dict[str, Any]]:
     return scans
 
 
+def _read_attribute(raw: Any, attrs: Any, *names: str) -> Any:
+    """Read a field from either the object itself or a mapping-like attrs container."""
+    for name in names:
+        if hasattr(raw, name):
+            value = getattr(raw, name)
+            if callable(value):
+                try:
+                    value = value()
+                except TypeError:
+                    value = None
+            if value not in (None, ""):
+                return value
+
+        if isinstance(attrs, dict):
+            if name in attrs:
+                value = attrs[name]
+                if value not in (None, ""):
+                    return value
+        elif hasattr(attrs, "get"):
+            try:
+                value = attrs.get(name)
+            except TypeError:
+                value = None
+            if value not in (None, ""):
+                return value
+
+    return None
+
+
 def extract_archive_session(raw: Any) -> dict[str, Any] | None:
     """Turn a raw archive experiment into a normalized payload for ingestion."""
     if raw is None:
@@ -49,35 +78,18 @@ def extract_archive_session(raw: Any) -> dict[str, Any] | None:
     if attrs is None:
         attrs = {}
 
-    def read(*names: str) -> Any:
-        for name in names:
-            if hasattr(raw, name):
-                value = getattr(raw, name)
-                if callable(value):
-                    try:
-                        value = value()
-                    except TypeError:
-                        value = None
-                if value not in (None, ""):
-                    return value
-            if hasattr(attrs, "get") and name in attrs:
-                value = attrs.get(name)
-                if value not in (None, ""):
-                    return value
-        return None
-
-    session_id = str(read("id", "session_id", "label", "name") or "")
+    session_id = str(_read_attribute(raw, attrs, "id", "session_id", "label", "name") or "")
     if not session_id:
         return None
 
     return {
-        "subject_id": str(read("subject_id", "subject", "subjectId") or ""),
-        "project_id": str(read("project_id", "project", "projectId") or ""),
+        "subject_id": str(_read_attribute(raw, attrs, "subject_id", "subject", "subjectId") or ""),
+        "project_id": str(_read_attribute(raw, attrs, "project_id", "project", "projectId") or ""),
         "session_id": session_id,
-        "date": _coerce_date(read("date", "session_date", "xnat:subjectassessordata/date")),
+        "date": _coerce_date(_read_attribute(raw, attrs, "date", "session_date", "xnat:subjectassessordata/date")),
         "origin": SessionOrigin.INTERNAL.value,
         "state": SessionState.ARCHIVED.value,
-        "scans": _coerce_scans(read("scans", "scan_data")),
+        "scans": _coerce_scans(_read_attribute(raw, attrs, "scans", "scan_data")),
     }
 
 
@@ -90,33 +102,16 @@ def extract_prearchive_session(raw: Any) -> dict[str, Any] | None:
     if attrs is None:
         attrs = {}
 
-    def read(*names: str) -> Any:
-        for name in names:
-            if hasattr(raw, name):
-                value = getattr(raw, name)
-                if callable(value):
-                    try:
-                        value = value()
-                    except TypeError:
-                        value = None
-                if value not in (None, ""):
-                    return value
-            if hasattr(attrs, "get") and name in attrs:
-                value = attrs.get(name)
-                if value not in (None, ""):
-                    return value
-        return None
-
-    session_id = str(read("id", "session_id", "label", "name") or "")
+    session_id = str(_read_attribute(raw, attrs, "id", "session_id", "label", "name") or "")
     if not session_id:
         return None
 
     return {
-        "subject_id": str(read("subject_id", "subject", "subjectId") or ""),
-        "project_id": str(read("project_id", "project", "projectId") or ""),
+        "subject_id": str(_read_attribute(raw, attrs, "subject_id", "subject", "subjectId") or ""),
+        "project_id": str(_read_attribute(raw, attrs, "project_id", "project", "projectId") or ""),
         "session_id": session_id,
-        "date": _coerce_date(read("date", "session_date", "xnat:subjectassessordata/date")),
+        "date": _coerce_date(_read_attribute(raw, attrs, "date", "session_date", "xnat:subjectassessordata/date")),
         "origin": SessionOrigin.INTERNAL.value,
         "state": SessionState.PREARCHIVE.value,
-        "scans": _coerce_scans(read("scans", "scan_data")),
+        "scans": _coerce_scans(_read_attribute(raw, attrs, "scans", "scan_data")),
     }

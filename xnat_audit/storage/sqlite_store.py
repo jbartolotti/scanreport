@@ -5,7 +5,10 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+import threading
 import time
+import traceback
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -27,11 +30,26 @@ class SessionTimeStore:
         last_error: Exception | None = None
         for attempt in range(1, 4):
             try:
+                self._log_step("BEFORE sqlite3.connect()", attempt)
                 connection = sqlite3.connect(str(self.db_path), timeout=30.0)
+                self._log_step("AFTER sqlite3.connect()", attempt)
+
+                self._log_step("BEFORE row_factory assignment", attempt)
                 connection.row_factory = sqlite3.Row
+                self._log_step("AFTER row_factory assignment", attempt)
+
+                self._log_step("BEFORE PRAGMA busy_timeout", attempt)
                 connection.execute("PRAGMA busy_timeout = 30000")
+                self._log_step("AFTER PRAGMA busy_timeout", attempt)
+
+                self._log_step("BEFORE PRAGMA journal_mode=WAL", attempt)
                 connection.execute("PRAGMA journal_mode = WAL")
+                self._log_step("AFTER PRAGMA journal_mode=WAL", attempt)
+
+                self._log_step("BEFORE PRAGMA synchronous=NORMAL", attempt)
                 connection.execute("PRAGMA synchronous = NORMAL")
+                self._log_step("AFTER PRAGMA synchronous=NORMAL", attempt)
+
                 connection.execute("PRAGMA foreign_keys = ON")
                 logger.info("SQLite connection established for %s (attempt %d)", self.db_path, attempt)
                 return connection
@@ -51,6 +69,7 @@ class SessionTimeStore:
         logger.info("Initializing schema for %s", self.db_path)
         for attempt in range(1, 4):
             try:
+                self._log_step("BEFORE CREATE TABLE", attempt)
                 with self.connection:
                     self.connection.execute(
                         """
@@ -66,6 +85,12 @@ class SessionTimeStore:
                         )
                         """
                     )
+                self._log_step("AFTER CREATE TABLE execute", attempt)
+
+                self._log_step("BEFORE commit", attempt)
+                self.connection.commit()
+                self._log_step("AFTER commit", attempt)
+
                 logger.info("SQLite schema initialized for %s", self.db_path)
                 return
             except sqlite3.OperationalError as exc:
@@ -133,33 +158,42 @@ class SessionTimeStore:
             self.connection.close()
             self.connection = None
 
+    def _log_step(self, step: str, attempt: int) -> None:
+        """Emit a timestamped step log with process/thread context."""
+        timestamp = datetime.now(timezone.utc).isoformat()
+        logger.error(
+            "[pid=%s][thread=%s][ts=%s][path=%s][attempt=%d] %s",
+            os.getpid(),
+            threading.get_ident(),
+            timestamp,
+            self.db_path,
+            attempt,
+            step,
+        )
+
     def _log_operational_error(self, exc: sqlite3.OperationalError, operation: str, attempt: int) -> None:
         """Emit structured diagnostics for SQLite failures."""
-        message = str(exc).lower()
-        if "database is locked" in message or "database table is locked" in message:
-            logger.error(
-                "SQLite lock detected while %s (attempt %d, path=%s): %s",
-                operation,
-                attempt,
-                self.db_path,
-                exc,
-            )
-        elif "unable to open database file" in message:
-            logger.error(
-                "SQLite file open failed while %s (attempt %d, path=%s): %s",
-                operation,
-                attempt,
-                self.db_path,
-                exc,
-            )
-        else:
-            logger.error(
-                "SQLite error while %s (attempt %d, path=%s): %s",
-                operation,
-                attempt,
-                self.db_path,
-                exc,
-            )
+        timestamp = datetime.now(timezone.utc).isoformat()
+        logger.error(
+            "[pid=%s][thread=%s][ts=%s][path=%s][attempt=%d][operation=%s] SQLite exception: class=%s text=%s",
+            os.getpid(),
+            threading.get_ident(),
+            timestamp,
+            self.db_path,
+            attempt,
+            operation,
+            exc.__class__.__name__,
+            str(exc),
+        )
+        logger.error("[pid=%s][thread=%s][ts=%s][path=%s][attempt=%d][operation=%s] Traceback:\n%s",
+            os.getpid(),
+            threading.get_ident(),
+            timestamp,
+            self.db_path,
+            attempt,
+            operation,
+            traceback.format_exc(),
+        )
 
     def _now(self) -> str:
         import datetime as dt

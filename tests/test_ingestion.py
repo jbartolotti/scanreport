@@ -2,8 +2,10 @@ import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
+from typing import Optional
 
 from xnat_audit.ingestion.dicom_times import compute_session_times, compute_signature
+from xnat_audit.ingestion.queries import extract_archive_session
 from xnat_audit.models.enums import SessionOrigin, SessionState
 from xnat_audit.models.scan import Scan
 from xnat_audit.models.session import Session
@@ -73,6 +75,33 @@ class IngestionWorkflowTests(unittest.TestCase):
         start_time, end_time, dicom_count = compute_session_times(session)
         self.assertGreaterEqual(dicom_count, 1)
         self.assertLessEqual(start_time, end_time)
+
+    def test_extract_archive_session_handles_eattrs_like_values(self) -> None:
+        class Attrs:
+            def __init__(self, values: dict[str, object]) -> None:
+                self._values = values
+
+            def get(self, name: str, default: Optional[object] = None) -> Optional[object]:
+                return self._values.get(name, default)
+
+        class FakeRaw:
+            def __init__(self) -> None:
+                self.attrs = Attrs(
+                    {
+                        "subject_id": "SUBJ4",
+                        "project_id": "PROJ4",
+                        "date": "2026-06-29",
+                    }
+                )
+                self.id = "SESSION4"
+
+        record = extract_archive_session(FakeRaw())
+
+        self.assertIsNotNone(record)
+        self.assertEqual(record["subject_id"], "SUBJ4")
+        self.assertEqual(record["project_id"], "PROJ4")
+        self.assertEqual(record["session_id"], "SESSION4")
+        self.assertEqual(record["date"], "2026-06-29")
 
 
 if __name__ == "__main__":
