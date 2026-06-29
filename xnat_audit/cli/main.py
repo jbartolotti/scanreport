@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sqlite3
 from datetime import date
 from pathlib import Path
 from typing import Sequence
@@ -44,7 +45,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     db_path = Path(settings.sqlite_db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"[xnat_audit] Initializing SQLite cache at {db_path}")
-    store = SessionTimeStore(str(db_path))
+    try:
+        store = SessionTimeStore(str(db_path))
+    except sqlite3.OperationalError as exc:
+        print(f"[xnat_audit] SQLite initialization failed: {exc}")
+        print("[xnat_audit] Close other processes using the database and retry, or remove the stale DB file if appropriate.")
+        return 1
 
     if not settings.xnat_url:
         print("[xnat_audit] XNAT URL is not configured, so the app cannot query XNAT yet.")

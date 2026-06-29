@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any
 
@@ -13,27 +14,58 @@ class SessionTimeStore:
     def __init__(self, db_path: str) -> None:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.connection = sqlite3.connect(self.db_path)
-        self.connection.row_factory = sqlite3.Row
+        self.connection = self._connect_with_retry()
         self.initialize()
+
+    def _connect_with_retry(self) -> sqlite3.Connection:
+        """Open a SQLite connection with a short retry window for transient locks."""
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                connection = sqlite3.connect(str(self.db_path), timeout=5.0)
+                connection.row_factory = sqlite3.Row
+                connection.execute("PRAGMA busy_timeout = 5000")
+                connection.execute("PRAGMA journal_mode = WAL")
+                return connection
+            except sqlite3.OperationalError as exc:
+                last_error = exc
+                if "locked" not in str(exc).lower():
+                    raise
+                if attempt == 2:
+                    raise
+                time.sleep(0.25 * (attempt + 1))
+        if last_error is not None:
+            raise last_error
+        raise sqlite3.OperationalError("Unable to open SQLite connection")
 
     def initialize(self) -> None:
         """Create the backing table if it does not already exist."""
-        self.connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS session_times (
-                session_id TEXT PRIMARY KEY,
-                project_id TEXT,
-                state TEXT,
-                start_time TEXT,
-                end_time TEXT,
-                dicom_count INTEGER,
-                signature TEXT,
-                last_checked TEXT
-            )
-            """
-        )
-        self.connection.commit()
+        for attempt in range(3):
+            try:
+                self.connection.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS session_times (
+                        session_id TEXT PRIMARY KEY,
+                        project_id TEXT,
+                        state TEXT,
+                        start_time TEXT,
+                        end_time TEXT,
+                        dicom_count INTEGER,
+                        signature TEXT,
+                        last_checked TEXT
+                    )
+                    """
+                )
+                self.connection.commit()
+                return
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower():
+                    raise
+                if attempt == 2:
+                    raise
+                time.sleep(0.25 * (attempt + 1))
+                self.connection.close()
+                self.connection = self._connect_with_retry()
 
     def get(self, session_id: str) -> dict[str, Any] | None:
         """Return the cached record for a session if one exists."""
