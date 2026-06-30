@@ -612,6 +612,40 @@ class XNATClient:
                 logger.debug("Session %s scan information located: %s", experiment_id, bool(scan_candidates))
                 if scan_candidates:
                     logger.debug("Session %s raw scan count: %d", experiment_id, len(scan_candidates))
+
+                items = payload.get("items")
+                if isinstance(items, list):
+                    logger.debug("Session %s payload items length: %d", experiment_id, len(items))
+                    if items:
+                        first_item = items[0]
+                        if isinstance(first_item, dict):
+                            logger.debug("Session %s first item keys: %s", experiment_id, list(first_item.keys()))
+                            child_items = first_item.get("items")
+                            if isinstance(child_items, list) and child_items:
+                                first_child = child_items[0]
+                                if isinstance(first_child, dict):
+                                    logger.debug(
+                                        "Session %s first child field: %s",
+                                        experiment_id,
+                                        first_child.get("field"),
+                                    )
+                                for child in child_items:
+                                    if isinstance(child, dict):
+                                        child_field = child.get("field")
+                                        if isinstance(child_field, str) and "scan" in child_field.lower():
+                                            logger.debug(
+                                                "Session %s scan child item count: %d",
+                                                experiment_id,
+                                                len(child.get("items", []) or []),
+                                            )
+                                            scan_items = child.get("items")
+                                            if isinstance(scan_items, list) and scan_items:
+                                                logger.debug(
+                                                    "Session %s first scan item discovered: %s",
+                                                    experiment_id,
+                                                    scan_items[0],
+                                                )
+                                                break
                 _DETAIL_DEBUG_COUNT += 1
             return payload
         return None
