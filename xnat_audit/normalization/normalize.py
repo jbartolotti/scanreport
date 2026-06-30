@@ -14,6 +14,12 @@ from .naming import normalize_sequence_name
 
 def normalize_session(raw: Mapping[str, Any]) -> Session:
     """Convert a raw XNAT record into the internal Session model."""
+
+    if raw.get("scans"):
+        import pprint
+
+        pprint.pprint(raw["scans"][0])
+
     session_date = raw.get("date")
     parsed_date = coerce_date(session_date) or date.today()
 

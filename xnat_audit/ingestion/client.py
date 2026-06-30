@@ -477,7 +477,6 @@ class XNATClient:
         print(
             f"[xnat_audit] Raw prearchive records discovered: "
             f"{len(records)}"
-            f"{records}"
         )
 
         rows: list[dict[str, Any]] = []
