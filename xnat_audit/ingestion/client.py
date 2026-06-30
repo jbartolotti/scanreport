@@ -212,6 +212,7 @@ class XNATClient:
         try:
             candidates = []
             for attr_name in ("prearchive", "sessions", "experiments"):
+                items = self._list_collection(interface.select, attr_name)
                 print(
                     f"{attr_name}: {len(items)} candidates"
                 )
@@ -591,19 +592,37 @@ def ingest_sessions(client: XNATClient, store: Any, start_date: str, end_date: s
         session = normalize_session(raw)
         signature = compute_signature(session)
         if store.has_changed(session.session_id, signature):
-            start_time, end_time, dicom_count = compute_session_times(session)
+            (
+                start_time,
+                end_time,
+                dicom_count,
+                scan_profile_json,
+            ) = compute_session_times(session)
+
             session.start_time = start_time
             session.end_time = end_time
             record = {
                 "session_id": session.session_id,
                 "project_id": session.project_id,
                 "state": session.state.value,
-                "start_time": start_time.isoformat() if start_time else None,
-                "end_time": end_time.isoformat() if end_time else None,
+                "start_time": (
+                    start_time.isoformat()
+                    if start_time
+                    else None
+                ),
+                "end_time": (
+                    end_time.isoformat()
+                    if end_time
+                    else None
+                ),
                 "dicom_count": dicom_count,
+                "scan_profile": scan_profile_json,
                 "signature": signature,
-                "last_checked": datetime.now(timezone.utc).isoformat(),
+                "last_checked": datetime.now(
+                    timezone.utc
+                ).isoformat(),
             }
+
             store.upsert(record)
             processed.append(session)
         else:

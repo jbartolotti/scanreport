@@ -81,6 +81,7 @@ class SessionTimeStore:
                             start_time TEXT,
                             end_time TEXT,
                             dicom_count INTEGER,
+                            scan_profile TEXT,
                             signature TEXT,
                             last_checked TEXT
                         )
@@ -103,7 +104,7 @@ class SessionTimeStore:
     def get(self, session_id: str) -> dict[str, Any] | None:
         """Return the cached record for a session if one exists."""
         row = self.connection.execute(
-            "SELECT session_id, project_id, state, start_time, end_time, dicom_count, signature, last_checked FROM session_times WHERE session_id = ?",
+            "SELECT session_id, project_id, state, start_time, end_time, dicom_count, scan_profile, signature, last_checked FROM session_times WHERE session_id = ?",
             (session_id,),
         ).fetchone()
         return dict(row) if row is not None else None
@@ -114,14 +115,15 @@ class SessionTimeStore:
             self.connection.execute(
                 """
                 INSERT INTO session_times (
-                    session_id, project_id, state, start_time, end_time, dicom_count, signature, last_checked
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    session_id, project_id, state, start_time, end_time, dicom_count, scan_profile, signature, last_checked
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session_id) DO UPDATE SET
                     project_id = excluded.project_id,
                     state = excluded.state,
                     start_time = excluded.start_time,
                     end_time = excluded.end_time,
                     dicom_count = excluded.dicom_count,
+                    scan_profile = excluded.scan_profile,
                     signature = excluded.signature,
                     last_checked = excluded.last_checked
                 """,
@@ -132,6 +134,7 @@ class SessionTimeStore:
                     record.get("start_time"),
                     record.get("end_time"),
                     record.get("dicom_count"),
+                    record.get("scan_profile"),
                     record.get("signature"),
                     record.get("last_checked"),
                 ),
