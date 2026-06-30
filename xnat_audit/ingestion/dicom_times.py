@@ -8,6 +8,7 @@ from datetime import datetime, time, timedelta
 from typing import Any
 
 from ..models.session import Session
+from ..utils import coerce_datetime
 
 
 def compute_signature(session: Session) -> str:
@@ -59,6 +60,8 @@ def compute_session_times(
         total_dicom_count += max(0, scan.dicom_count)
 
         scan_start = getattr(scan, "start_time", None)
+        if isinstance(scan_start, str):
+            scan_start = coerce_datetime(scan_start)
         frames = getattr(scan, "frames", None)
         tr = getattr(scan, "tr", None)
 

@@ -9,7 +9,7 @@ from typing import Any, Mapping
 from ..models.enums import SessionOrigin, SessionState
 from ..models.scan import Scan
 from ..models.session import Session
-from ..utils import coerce_date
+from ..utils import coerce_date, coerce_datetime
 from .naming import normalize_sequence_name
 
 logger = logging.getLogger(__name__)
@@ -23,14 +23,35 @@ def normalize_session(raw: Mapping[str, Any]) -> Session:
     parsed_date = coerce_date(session_date) or date.today()
 
     raw_scans = list(raw.get("scans", []))
-    scans = [
-        Scan(
-            sequence_name=scan.get("sequence_name", ""),
-            normalized_name=normalize_sequence_name(str(scan.get("sequence_name", ""))),
-            dicom_count=int(scan.get("dicom_count", 0) or 0),
+    scans = []
+    for scan in raw_scans:
+        if not isinstance(scan, Mapping):
+            continue
+        sequence_name = str(scan.get("sequence_name", "") or "")
+        frames_value = scan.get("frames")
+        tr_value = scan.get("tr")
+        try:
+            frames = float(frames_value) if frames_value not in (None, "") else None
+        except (TypeError, ValueError):
+            frames = None
+        try:
+            tr = float(tr_value) if tr_value not in (None, "") else None
+        except (TypeError, ValueError):
+            tr = None
+        scans.append(
+            Scan(
+                sequence_name=sequence_name,
+                normalized_name=normalize_sequence_name(sequence_name),
+                dicom_count=int(scan.get("dicom_count", 0) or 0),
+                sequence_number=scan.get("sequence_number"),
+                protocol_name=scan.get("protocol_name"),
+                series_description=scan.get("series_description"),
+                start_time=coerce_datetime(scan.get("start_time")),
+                start_date=coerce_date(scan.get("start_date")),
+                frames=frames,
+                tr=tr,
+            )
         )
-        for scan in raw_scans
-    ]
 
     global _NORMALIZE_DEBUG_COUNT
     if logger.isEnabledFor(logging.DEBUG) and _NORMALIZE_DEBUG_COUNT < 3:
@@ -44,12 +65,17 @@ def normalize_session(raw: Mapping[str, Any]) -> Session:
         if scans:
             first_scan = scans[0]
             logger.debug(
-                "normalized first scan: sequence_name=%s dicom_count=%d protocol_name=%s frames=%s tr=%s",
-                first_scan.sequence_name,
-                first_scan.dicom_count,
-                None,
-                None,
-                None,
+                "normalized first scan: %s",
+                {
+                    "sequence_name": first_scan.sequence_name,
+                    "dicom_count": first_scan.dicom_count,
+                    "protocol_name": first_scan.protocol_name,
+                    "series_description": first_scan.series_description,
+                    "start_time": first_scan.start_time,
+                    "start_date": first_scan.start_date,
+                    "frames": first_scan.frames,
+                    "tr": first_scan.tr,
+                },
             )
         _NORMALIZE_DEBUG_COUNT += 1
 

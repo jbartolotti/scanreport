@@ -7,8 +7,9 @@ from unittest.mock import patch
 
 from xnat_audit.ingestion.client import XNATClient
 from xnat_audit.ingestion.dicom_times import compute_session_times, compute_signature
-from xnat_audit.ingestion.queries import extract_archive_session, extract_prearchive_session
+from xnat_audit.ingestion.queries import _coerce_scans, _extract_scan_items, extract_archive_session, extract_prearchive_session
 from xnat_audit.ingestion.refresh import refresh_cache
+from xnat_audit.normalization.normalize import normalize_session
 from xnat_audit.models.enums import SessionOrigin, SessionState
 from xnat_audit.models.scan import Scan
 from xnat_audit.models.session import Session
@@ -70,6 +71,62 @@ class IngestionWorkflowTests(unittest.TestCase):
         self.assertEqual(coerce_date("2026-06-30 12:34:56"), date(2026, 6, 30))
         self.assertEqual(coerce_date("06/30/2026"), date(2026, 6, 30))
         self.assertEqual(coerce_date(datetime(2026, 6, 30, 8, 15, 0)), date(2026, 6, 30))
+
+    def test_nested_scan_payload_survives_full_ingestion_path(self) -> None:
+        payload = {
+            "items": [
+                {
+                    "children": [
+                        {
+                            "field": "scans/scan",
+                            "items": [
+                                {
+                                    "data_fields": {
+                                        "ID": "1",
+                                        "protocolName": "MPRAGE",
+                                        "series_description": "MPRAGE",
+                                        "startTime": "2026-06-30T09:00:00",
+                                        "start_date": "2026-06-30",
+                                        "frames": "100",
+                                        "parameters": {"tr": "3.0"},
+                                    },
+                                    "children": [{"file_count": 12}],
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ]
+        }
+
+        scan_items = _extract_scan_items(payload)
+        self.assertEqual(len(scan_items), 1)
+
+        normalized_scans = _coerce_scans(scan_items)
+        self.assertEqual(len(normalized_scans), 1)
+        self.assertEqual(normalized_scans[0]["dicom_count"], 12)
+        self.assertEqual(normalized_scans[0]["protocol_name"], "MPRAGE")
+        self.assertEqual(normalized_scans[0]["frames"], 100.0)
+        self.assertEqual(normalized_scans[0]["tr"], 3.0)
+
+        session = normalize_session(
+            {
+                "session_id": "SESSION7",
+                "subject_id": "SUBJ7",
+                "project_id": "PROJ7",
+                "date": "2026-06-30",
+                "scans": normalized_scans,
+            }
+        )
+        self.assertEqual(len(session.scans), 1)
+        self.assertEqual(session.scans[0].protocol_name, "MPRAGE")
+        self.assertEqual(session.scans[0].dicom_count, 12)
+
+        start_time, end_time, dicom_count, scan_profile = compute_session_times(session)
+        self.assertIsNotNone(start_time)
+        self.assertIsNotNone(end_time)
+        self.assertEqual(dicom_count, 12)
+        self.assertIn("MPRAGE", scan_profile)
 
     def test_compute_session_times_returns_positive_values(self) -> None:
         session = Session(

@@ -26,7 +26,7 @@ from ..normalization.normalize import normalize_session
 from ..models.session import Session
 from ..utils import coerce_date
 from .dicom_times import compute_session_times, compute_signature
-from .queries import extract_archive_session, extract_prearchive_session
+from .queries import _coerce_scans, extract_archive_session, extract_prearchive_session
 from .refresh import refresh_cache
 
 logger = logging.getLogger(__name__)
@@ -580,6 +580,31 @@ class XNATClient:
             return candidates
         return []
 
+    def _collect_scan_payload(self, payload: Any) -> list[dict[str, Any]]:
+        """Extract scan items from the nested XNAT experiment detail payload."""
+        if not isinstance(payload, dict):
+            return []
+
+        items = payload.get("items")
+        if not isinstance(items, list):
+            return []
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            children = item.get("children")
+            if not isinstance(children, list):
+                continue
+            for child in children:
+                if not isinstance(child, dict):
+                    continue
+                if child.get("field") != "scans/scan":
+                    continue
+                child_items = child.get("items")
+                if isinstance(child_items, list):
+                    return [item_value for item_value in child_items if isinstance(item_value, dict)]
+        return []
+
     def _fetch_experiment_details(self, experiment_id: Any) -> dict[str, Any] | None:
         """Fetch a single experiment's detailed metadata for surviving sessions."""
         if experiment_id is None:
@@ -620,16 +645,16 @@ class XNATClient:
                         first_item = items[0]
                         if isinstance(first_item, dict):
                             logger.debug("Session %s first item keys: %s", experiment_id, list(first_item.keys()))
-                            child_items = first_item.get("items")
-                            if isinstance(child_items, list) and child_items:
-                                first_child = child_items[0]
+                            children = first_item.get("children")
+                            if isinstance(children, list) and children:
+                                first_child = children[0]
                                 if isinstance(first_child, dict):
                                     logger.debug(
                                         "Session %s first child field: %s",
                                         experiment_id,
                                         first_child.get("field"),
                                     )
-                                for child in child_items:
+                                for child in children:
                                     if isinstance(child, dict):
                                         child_field = child.get("field")
                                         if isinstance(child_field, str) and "scan" in child_field.lower():
@@ -657,10 +682,13 @@ class XNATClient:
             return None
         detail_project = None
         detail_subject = None
+        scan_payload: list[dict[str, Any]] = []
         if isinstance(detail, dict):
             detail_project = detail.get("project") or detail.get("project_id")
             detail_subject = detail.get("subject_id") or detail.get("subject")
-        return {
+            scan_payload = _coerce_scans(self._collect_scan_payload(detail))
+
+        record = {
             "session_id": str(experiment_id),
             "subject_id": str(detail_subject) if detail_subject is not None else "",
             "project_id": str(detail_project or row.get("project", "")),
@@ -668,7 +696,14 @@ class XNATClient:
             "label": str(row.get("label", "") or ""),
             "origin": "INTERNAL",
             "state": "ARCHIVED",
+            "scans": scan_payload,
         }
+
+        if logger.isEnabledFor(logging.DEBUG) and _DETAIL_DEBUG_COUNT < 3:
+            logger.debug("Archive record %s scan_count=%d", experiment_id, len(scan_payload))
+            if scan_payload:
+                logger.debug("Archive record %s first scan=%s", experiment_id, scan_payload[0])
+        return record
 
     def _read_project_id(self, project: Any) -> str:
         """Best-effort extraction of a project identifier from a project container."""
