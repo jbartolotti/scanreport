@@ -8,18 +8,14 @@ from typing import Any, Mapping
 from ..models.enums import SessionOrigin, SessionState
 from ..models.scan import Scan
 from ..models.session import Session
+from ..utils import coerce_date
 from .naming import normalize_sequence_name
 
 
 def normalize_session(raw: Mapping[str, Any]) -> Session:
     """Convert a raw XNAT record into the internal Session model."""
     session_date = raw.get("date")
-    if isinstance(session_date, str):
-        parsed_date = datetime.strptime(session_date, "%Y-%m-%d").date()
-    elif isinstance(session_date, date):
-        parsed_date = session_date
-    else:
-        parsed_date = date.today()
+    parsed_date = coerce_date(session_date) or date.today()
 
     scans = [
         Scan(

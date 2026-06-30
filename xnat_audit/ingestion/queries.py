@@ -3,23 +3,18 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from typing import Any
 
 from ..models.enums import SessionOrigin, SessionState
+from ..utils import coerce_date
 
 logger = logging.getLogger(__name__)
 
 
 def _coerce_date(value: Any) -> str | None:
     """Best-effort conversion of date-like values into an ISO date string."""
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value.date().isoformat()
-    if isinstance(value, str):
-        return value
-    return str(value)
+    parsed_date = coerce_date(value)
+    return parsed_date.isoformat() if parsed_date is not None else None
 
 
 def _coerce_scans(raw: Any) -> list[dict[str, Any]]:

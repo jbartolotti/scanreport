@@ -24,6 +24,7 @@ except ImportError:  # pragma: no cover - exercised when pyxnat is unavailable.
 
 from ..normalization.normalize import normalize_session
 from ..models.session import Session
+from ..utils import coerce_date
 from .dicom_times import compute_session_times, compute_signature
 from .queries import extract_archive_session, extract_prearchive_session
 from .refresh import refresh_cache
@@ -148,7 +149,7 @@ class XNATClient:
             surviving_rows: list[dict[str, Any]] = []
 
             for row in experiment_rows:
-                row_date = self._coerce_date(str(row.get("date", "")) if row.get("date") is not None else None)
+                row_date = coerce_date(str(row.get("date", "")) if row.get("date") is not None else None)
                 if row_date is None:
                     continue
                 if row_date < lookback_cutoff:
@@ -217,7 +218,7 @@ class XNATClient:
             surviving_rows: list[dict[str, Any]] = []
 
             for row in metadata_rows:
-                row_date = self._coerce_date(str(row.get("uploaded", "")) if row.get("uploaded") is not None else None)
+                row_date = coerce_date(str(row.get("uploaded", "")) if row.get("uploaded") is not None else None)
                 if row_date is None:
                     continue
                 if row_date < lookback_cutoff:
@@ -476,12 +477,13 @@ class XNATClient:
         print(
             f"[xnat_audit] Raw prearchive records discovered: "
             f"{len(records)}"
+            f"{records}"
         )
 
         rows: list[dict[str, Any]] = []
 
-        start_dt = self._coerce_date(start_date)
-        end_dt = self._coerce_date(end_date)
+        start_dt = coerce_date(start_date)
+        end_dt = coerce_date(end_date)
 
         for item in records:
 
@@ -493,7 +495,7 @@ class XNATClient:
             if row is None:
                 continue
 
-            uploaded = self._coerce_date(
+            uploaded = coerce_date(
                 str(row.get("uploaded", ""))
             )
 
@@ -620,8 +622,8 @@ class XNATClient:
 
     def _is_in_archive_window(self, item: Any, start_date: str, end_date: str) -> bool:
         """Return True when an experiment is inside the requested date window and not older than the lookback cutoff."""
-        effective_start_date = self._coerce_date(start_date)
-        effective_end_date = self._coerce_date(end_date)
+        effective_start_date = coerce_date(start_date)
+        effective_end_date = coerce_date(end_date)
         if effective_start_date is None:
             effective_start_date = date.today() - timedelta(days=self.lookback_days)
         if effective_end_date is None:
@@ -673,38 +675,6 @@ class XNATClient:
                     except ValueError:
                         return None
         return None
-
-    def _coerce_date(self, value: str | None) -> date | None:
-        """Parse common XNAT date representations into a date."""
-
-        if value is None:
-            return None
-
-        if isinstance(value, date) and not isinstance(value, datetime):
-            return value
-
-        if isinstance(value, datetime):
-            return value.date()
-
-        if not isinstance(value, str):
-            return None
-
-        value = value.strip()
-
-        for fmt in (
-            "%Y-%m-%d %H:%M:%S.%f",  # 2026-04-24 00:00:00.0
-            "%Y-%m-%d %H:%M:%S",     # 2026-04-24 00:00:00
-            "%Y-%m-%d",             # 2026-04-24
-        ):
-            try:
-                return datetime.strptime(value, fmt).date()
-            except ValueError:
-                pass
-
-        try:
-            return datetime.fromisoformat(value).date()
-        except ValueError:
-            return None
 
     def _safe_call(self, candidate: Any | None) -> list[Any]:
         """Safely invoke a callable and normalize the result to a list."""

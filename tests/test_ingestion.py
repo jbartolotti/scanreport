@@ -1,6 +1,6 @@
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 from unittest.mock import patch
@@ -13,6 +13,7 @@ from xnat_audit.models.enums import SessionOrigin, SessionState
 from xnat_audit.models.scan import Scan
 from xnat_audit.models.session import Session
 from xnat_audit.storage.sqlite_store import SessionTimeStore
+from xnat_audit.utils import coerce_date
 
 
 class IngestionWorkflowTests(unittest.TestCase):
@@ -63,6 +64,12 @@ class IngestionWorkflowTests(unittest.TestCase):
             )
             self.assertFalse(store.has_changed(session.session_id, signature))
             store.close()
+
+    def test_coerce_date_handles_multiple_common_formats(self) -> None:
+        self.assertEqual(coerce_date("2026-06-30"), date(2026, 6, 30))
+        self.assertEqual(coerce_date("2026-06-30 12:34:56"), date(2026, 6, 30))
+        self.assertEqual(coerce_date("06/30/2026"), date(2026, 6, 30))
+        self.assertEqual(coerce_date(datetime(2026, 6, 30, 8, 15, 0)), date(2026, 6, 30))
 
     def test_compute_session_times_returns_positive_values(self) -> None:
         session = Session(
