@@ -1,0 +1,60 @@
+"""Refresh workflow for ingesting recent XNAT sessions into the local registry."""
+
+from __future__ import annotations
+
+from datetime import date, timedelta
+from typing import Any
+
+from ..normalization.normalize import normalize_session
+from ..models.session import Session
+from .dicom_times import compute_session_times, compute_signature
+
+
+def refresh_cache(*, client: Any, store: Any, lookback_days: int) -> dict[str, int]:
+    """Refresh the local session registry from XNAT archives and prearchives."""
+    today = date.today()
+    start_date = (today - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+    end_date = today.strftime("%Y-%m-%d")
+
+    archive_records = client.get_archive_sessions(start_date, end_date)
+    prearchive_records = client.get_prearchive_sessions(start_date, end_date)
+
+    sessions_discovered = len(archive_records) + len(prearchive_records)
+    sessions_updated = 0
+    sessions_processed = 0
+
+    for raw in [*archive_records, *prearchive_records]:
+        session = normalize_session(raw)
+        signature = compute_signature(session)
+        sessions_processed += 1
+        if store.has_changed(session.session_id, signature):
+            start_time, end_time, dicom_count = compute_session_times(session)
+            session.start_time = start_time
+            session.end_time = end_time
+            scan_profile = "|".join(sorted({scan.normalized_name for scan in session.scans if scan.normalized_name}))
+            record = {
+                "session_id": session.session_id,
+                "project_id": session.project_id,
+                "state": session.state.value,
+                "start_time": start_time.isoformat() if start_time else None,
+                "end_time": end_time.isoformat() if end_time else None,
+                "dicom_count": dicom_count,
+                "scan_profile": scan_profile,
+                "signature": signature,
+                "last_checked": date.today().isoformat(),
+            }
+            store.upsert(record)
+            sessions_updated += 1
+        else:
+            store.mark_checked(session.session_id)
+
+    return {
+        "sessions_discovered": sessions_discovered,
+        "sessions_processed": sessions_processed,
+        "sessions_updated": sessions_updated,
+    }
+
+
+def ingest_recent_sessions(*, client: Any, store: Any, lookback_days: int) -> dict[str, int]:
+    """Compatibility entrypoint for the new refresh workflow."""
+    return refresh_cache(client=client, store=store, lookback_days=lookback_days)

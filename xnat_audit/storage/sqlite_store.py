@@ -8,7 +8,7 @@ import sqlite3
 import threading
 import time
 import traceback
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -108,6 +108,40 @@ class SessionTimeStore:
             (session_id,),
         ).fetchone()
         return dict(row) if row is not None else None
+
+    def list_all(self) -> list[dict[str, Any]]:
+        """Return all cached session records."""
+        rows = self.connection.execute(
+            "SELECT session_id, project_id, state, start_time, end_time, dicom_count, scan_profile, signature, last_checked FROM session_times ORDER BY start_time, end_time"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_for_date(self, report_date: date) -> list[dict[str, Any]]:
+        """Return cached sessions that occur on the supplied report date."""
+        target = report_date.strftime("%Y-%m-%d")
+        rows = self.connection.execute(
+            "SELECT session_id, project_id, state, start_time, end_time, dicom_count, scan_profile, signature, last_checked FROM session_times WHERE (start_time LIKE ? OR end_time LIKE ?) ORDER BY start_time, end_time",
+            (f"{target}%", f"{target}%"),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_for_week(self, week_start: date) -> list[dict[str, Any]]:
+        """Return cached sessions that fall within the supplied week."""
+        week_end = week_start + timedelta(days=6)
+        rows = self.list_all()
+        filtered: list[dict[str, Any]] = []
+        for row in rows:
+            for field in (row.get("start_time"), row.get("end_time")):
+                if not field:
+                    continue
+                try:
+                    parsed = datetime.fromisoformat(field)
+                except ValueError:
+                    continue
+                if week_start <= parsed.date() <= week_end:
+                    filtered.append(row)
+                    break
+        return filtered
 
     def upsert(self, record: dict[str, Any]) -> None:
         """Insert or update a session timing record."""

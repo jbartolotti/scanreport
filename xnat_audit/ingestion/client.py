@@ -26,6 +26,7 @@ from ..normalization.normalize import normalize_session
 from ..models.session import Session
 from .dicom_times import compute_session_times, compute_signature
 from .queries import extract_archive_session, extract_prearchive_session
+from .refresh import refresh_cache
 
 logger = logging.getLogger(__name__)
 REQUEST_LOGGING_INSTALLED = False
@@ -440,45 +441,84 @@ class XNATClient:
             "date": "",
         }
 
-    def _fetch_prearchive_metadata(self, start_date: str, end_date: str) -> list[dict[str, Any]]:
-        """Fetch prearchive metadata from the XNAT REST API without pyxnat selectors."""
+    def _fetch_prearchive_metadata(
+        self,
+        start_date: str,
+        end_date: str,
+    ) -> list[dict[str, Any]]:
+        """Fetch prearchive session metadata from XNAT."""
+
         if requests is None:
             return []
 
         username, password = self._load_credentials()
+
         session = requests.Session()
         if username and password:
             session.auth = (username, password)
 
         url = f"{self.base_url}/data/prearchive/projects?format=json"
+
         try:
             response = session.get(url, timeout=30)
             response.raise_for_status()
-        except Exception as exc:
-            logger.warning("Prearchive metadata fetch failed: %s", exc)
-            return []
-
-        try:
             payload = response.json()
-        except Exception:
-            payload = None
-
-        if not isinstance(payload, list):
+        except Exception as exc:
+            logger.warning(
+                "Prearchive metadata fetch failed: %s",
+                exc,
+            )
             return []
+
+        resultset = payload.get("ResultSet", {})
+        records = resultset.get("Result", [])
+
+        print(
+            f"[xnat_audit] Raw prearchive records discovered: "
+            f"{len(records)}"
+        )
 
         rows: list[dict[str, Any]] = []
-        for item in payload:
+
+        start_dt = self._coerce_date(start_date)
+        end_dt = self._coerce_date(end_date)
+
+        for item in records:
+
             if not isinstance(item, dict):
                 continue
+
             row = self._normalize_prearchive_row(item)
+
             if row is None:
                 continue
-            if start_date and self._coerce_date(str(row.get("scan_date", ""))) and self._coerce_date(str(row.get("scan_date", ""))) < self._coerce_date(start_date):
+
+            scan_date = self._coerce_date(
+                str(row.get("scan_date", ""))
+            )
+
+            if scan_date is None:
+                logger.debug(
+                    "Skipping prearchive item with no parseable date: %s",
+                    row,
+                )
                 continue
-            if end_date and self._coerce_date(str(row.get("scan_date", ""))) and self._coerce_date(str(row.get("scan_date", ""))) > self._coerce_date(end_date):
+
+            if start_dt and scan_date < start_dt:
                 continue
+
+            if end_dt and scan_date > end_dt:
+                continue
+
             rows.append(row)
+
+        print(
+            f"[xnat_audit] Prearchive records surviving date filter: "
+            f"{len(rows)}"
+        )
+
         return rows
+
 
     def _normalize_prearchive_row(self, item: dict[str, Any]) -> dict[str, Any] | None:
         """Normalize a single prearchive metadata item into a lightweight row."""
@@ -635,22 +675,36 @@ class XNATClient:
         return None
 
     def _coerce_date(self, value: str | None) -> date | None:
-        """Parse a string into a date value when possible."""
+        """Parse common XNAT date representations into a date."""
+
         if value is None:
             return None
+
         if isinstance(value, date) and not isinstance(value, datetime):
             return value
+
         if isinstance(value, datetime):
             return value.date()
-        if isinstance(value, str):
+
+        if not isinstance(value, str):
+            return None
+
+        value = value.strip()
+
+        for fmt in (
+            "%Y-%m-%d %H:%M:%S.%f",  # 2026-04-24 00:00:00.0
+            "%Y-%m-%d %H:%M:%S",     # 2026-04-24 00:00:00
+            "%Y-%m-%d",             # 2026-04-24
+        ):
             try:
-                return datetime.fromisoformat(value).date()
+                return datetime.strptime(value, fmt).date()
             except ValueError:
-                try:
-                    return datetime.strptime(value, "%Y-%m-%d").date()
-                except ValueError:
-                    return None
-        return None
+                pass
+
+        try:
+            return datetime.fromisoformat(value).date()
+        except ValueError:
+            return None
 
     def _safe_call(self, candidate: Any | None) -> list[Any]:
         """Safely invoke a callable and normalize the result to a list."""
@@ -674,49 +728,6 @@ class XNATClient:
 
 
 def ingest_sessions(client: XNATClient, store: Any, start_date: str, end_date: str) -> list[Session]:
-    """Ingest archive and prearchive sessions incrementally using the cache store."""
-    processed: list[Session] = []
-    archive_records = client.get_archive_sessions(start_date, end_date)
-    prearchive_records = client.get_prearchive_sessions(start_date, end_date)
-
-    for raw in [*archive_records, *prearchive_records]:
-        session = normalize_session(raw)
-        signature = compute_signature(session)
-        if store.has_changed(session.session_id, signature):
-            (
-                start_time,
-                end_time,
-                dicom_count,
-                scan_profile_json,
-            ) = compute_session_times(session)
-
-            session.start_time = start_time
-            session.end_time = end_time
-            record = {
-                "session_id": session.session_id,
-                "project_id": session.project_id,
-                "state": session.state.value,
-                "start_time": (
-                    start_time.isoformat()
-                    if start_time
-                    else None
-                ),
-                "end_time": (
-                    end_time.isoformat()
-                    if end_time
-                    else None
-                ),
-                "dicom_count": dicom_count,
-                "scan_profile": scan_profile_json,
-                "signature": signature,
-                "last_checked": datetime.now(
-                    timezone.utc
-                ).isoformat(),
-            }
-
-            store.upsert(record)
-            processed.append(session)
-        else:
-            store.mark_checked(session.session_id)
-
-    return processed
+    """Compatibility wrapper that preserves the old ingestion signature while routing through the new refresh workflow."""
+    refresh_result = refresh_cache(client=client, store=store, lookback_days=30)
+    return [Session(subject_id="", project_id="", session_id="", date=date.today(), origin=None, state=None)] * refresh_result["sessions_processed"]

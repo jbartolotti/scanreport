@@ -5,12 +5,14 @@ from __future__ import annotations
 import argparse
 import logging
 import sqlite3
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Sequence
 
 from ..config.config import load_settings
-from ..ingestion.client import XNATClient, ingest_sessions
+from ..ingestion.client import XNATClient
+from ..ingestion.refresh import refresh_cache
+from ..reporting.report import generate_report
 from ..storage.sqlite_store import SessionTimeStore
 
 logger = logging.getLogger("xnat_audit")
@@ -37,10 +39,13 @@ def configure_logging(verbose: bool = False, quiet: bool = False) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Create the CLI argument parser."""
+    """Create the CLI argument parser for refresh and report workflows."""
     parser = argparse.ArgumentParser(prog="python -m xnat_audit")
+    parser.add_argument("command", nargs="?", choices=["refresh", "report"], default=None, help="Workflow to run")
     parser.add_argument("config_path", nargs="?", default=None, help="Path to a JSON config file (defaults to ./config.json)")
-    parser.add_argument("--date", default=None, help="Target date for the audit run (YYYY-MM-DD)")
+    parser.add_argument("--date", dest="report_date", default=None, help="Report date for the report workflow (YYYY-MM-DD)")
+    parser.add_argument("--week", dest="report_week", default=None, help="Report week anchor for the report workflow (YYYY-MM-DD)")
+    parser.add_argument("--lookback-days", type=int, default=None, help="Lookback window for cache refresh")
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging, including detailed SQLite step logs")
     parser.add_argument("--quiet", action="store_true", help="Suppress informational messages and only show warnings/errors")
     return parser
@@ -59,10 +64,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             config_path = None
 
     settings = load_settings(config_path)
-    target_date = args.date or date.today().strftime("%Y-%m-%d")
+    target_date = date.today().strftime("%Y-%m-%d")
+    command = args.command or ("report" if args.report_date or args.report_week else "refresh")
 
-    print(f"[xnat_audit] Starting audit run for {target_date}")
-    logger.info("Starting audit run for %s", target_date)
+    print(f"[xnat_audit] Starting {command} workflow for {target_date}")
+    logger.info("Starting %s workflow for %s", command, target_date)
     if config_path is None:
         print("[xnat_audit] No config file supplied; using built-in defaults")
         logger.info("No config file supplied; using built-in defaults")
@@ -84,6 +90,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("[xnat_audit] Close other processes using the database and retry, or remove the stale DB file if appropriate.")
         return 1
 
+    if command == "report":
+        report_date = None
+        report_week = None
+        if args.report_date:
+            try:
+                report_date = datetime.strptime(args.report_date, "%Y-%m-%d").date()
+            except ValueError:
+                print(f"[xnat_audit] Invalid report date: {args.report_date}")
+                return 1
+        if args.report_week:
+            try:
+                report_week = datetime.strptime(args.report_week, "%Y-%m-%d").date()
+            except ValueError:
+                print(f"[xnat_audit] Invalid report week anchor: {args.report_week}")
+                return 1
+        report = generate_report(store=store, report_date=report_date, report_week=report_week)
+        print(f"[xnat_audit] Generated report with {report['session_count']} session(s)")
+        logger.info("Generated report with %d session(s)", report["session_count"])
+        return 0
+
     if not settings.xnat_url:
         print("[xnat_audit] XNAT URL is not configured, so the app cannot query XNAT yet.")
         logger.warning("XNAT URL is not configured")
@@ -91,7 +117,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     print(f"[xnat_audit] Connecting to XNAT at {settings.xnat_url}")
     logger.info("Connecting to XNAT at %s", settings.xnat_url)
-    client = XNATClient(settings.xnat_url, lookback_days=settings.lookback_days)
+    client = XNATClient(settings.xnat_url, lookback_days=args.lookback_days or settings.lookback_days)
     try:
         client.connect()
     except Exception as exc:  # pragma: no cover - depends on runtime environment
@@ -100,11 +126,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("[xnat_audit] Ensure pyxnat is installed and your .netrc credentials are available for the configured host.")
         return 0
 
-    print("[xnat_audit] Querying archive and prearchive sessions")
-    logger.info("Querying archive and prearchive sessions")
-    processed_sessions = ingest_sessions(client, store, target_date, target_date)
-    print(f"[xnat_audit] Completed ingestion; processed {len(processed_sessions)} session(s)")
-    logger.info("Completed ingestion; processed %d session(s)", len(processed_sessions))
+    print("[xnat_audit] Refreshing archive and prearchive sessions")
+    logger.info("Refreshing archive and prearchive sessions")
+    refresh_stats = refresh_cache(client=client, store=store, lookback_days=args.lookback_days or settings.lookback_days)
+    print(
+        "[xnat_audit] Completed refresh; discovered={sessions_discovered}, processed={sessions_processed}, updated={sessions_updated}".format(
+            **refresh_stats
+        )
+    )
+    logger.info(
+        "Completed refresh; discovered=%d processed=%d updated=%d",
+        refresh_stats["sessions_discovered"],
+        refresh_stats["sessions_processed"],
+        refresh_stats["sessions_updated"],
+    )
     return 0
 
 

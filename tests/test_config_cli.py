@@ -9,6 +9,8 @@ from unittest.mock import patch
 
 from xnat_audit.cli.main import build_parser, main
 from xnat_audit.config.config import load_settings
+from xnat_audit.reporting.report import generate_report
+from xnat_audit.storage.sqlite_store import SessionTimeStore
 
 
 class ConfigCliTests(unittest.TestCase):
@@ -72,6 +74,41 @@ class ConfigCliTests(unittest.TestCase):
         args = parser.parse_args(["--verbose", "config.json"])
 
         self.assertTrue(args.verbose)
+
+    def test_build_parser_accepts_refresh_and_report_commands(self) -> None:
+        parser = build_parser()
+        refresh_args = parser.parse_args(["refresh", "config.json"])
+        report_args = parser.parse_args(["report", "--date", "2026-06-29"])
+
+        self.assertEqual(refresh_args.command, "refresh")
+        self.assertEqual(report_args.command, "report")
+        self.assertEqual(report_args.report_date, "2026-06-29")
+
+    def test_generate_report_reads_from_sqlite_registry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = str(Path(tmp_dir) / "registry.db")
+            store = SessionTimeStore(db_path)
+            store.upsert(
+                {
+                    "session_id": "S1",
+                    "project_id": "P1",
+                    "state": "ARCHIVED",
+                    "start_time": "2026-06-29T10:00:00+00:00",
+                    "end_time": "2026-06-29T11:00:00+00:00",
+                    "dicom_count": 3,
+                    "scan_profile": "t1",
+                    "signature": "sig1",
+                    "last_checked": "2026-06-29T00:00:00+00:00",
+                }
+            )
+            store.close()
+
+            reopened = SessionTimeStore(db_path)
+            report = generate_report(store=reopened, report_date=date(2026, 6, 29))
+            reopened.close()
+
+            self.assertEqual(report["session_count"], 1)
+            self.assertEqual(report["sessions"][0]["session_id"], "S1")
 
 
 if __name__ == "__main__":
