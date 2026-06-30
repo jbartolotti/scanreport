@@ -3,10 +3,12 @@ import unittest
 from datetime import date
 from pathlib import Path
 from typing import Optional
+from unittest.mock import patch
 
 from xnat_audit.ingestion.client import XNATClient
 from xnat_audit.ingestion.dicom_times import compute_session_times, compute_signature
 from xnat_audit.ingestion.queries import extract_archive_session, extract_prearchive_session
+from xnat_audit.ingestion.refresh import refresh_cache
 from xnat_audit.models.enums import SessionOrigin, SessionState
 from xnat_audit.models.scan import Scan
 from xnat_audit.models.session import Session
@@ -73,9 +75,48 @@ class IngestionWorkflowTests(unittest.TestCase):
             scans=[Scan(sequence_name="FLAIR", normalized_name="flair", dicom_count=5)],
         )
 
-        start_time, end_time, dicom_count = compute_session_times(session)
+        start_time, end_time, dicom_count, scan_profile = compute_session_times(session)
         self.assertGreaterEqual(dicom_count, 1)
         self.assertLessEqual(start_time, end_time)
+        self.assertIsInstance(scan_profile, str)
+
+    def test_refresh_cache_writes_scan_profile_from_compute_session_times(self) -> None:
+        class FakeClient:
+            def get_archive_sessions(self, start_date: str, end_date: str) -> list[dict[str, object]]:
+                return [
+                    {
+                        "session_id": "SESSION6",
+                        "subject_id": "SUBJ6",
+                        "project_id": "PROJ6",
+                        "date": "2026-06-30",
+                        "state": "ARCHIVED",
+                        "scans": [{"sequence_name": "T1", "dicom_count": 3}],
+                    }
+                ]
+
+            def get_prearchive_sessions(self, start_date: str, end_date: str) -> list[dict[str, object]]:
+                return []
+
+        class FakeStore:
+            def __init__(self) -> None:
+                self.records: list[dict[str, object]] = []
+
+            def has_changed(self, session_id: str, signature: str) -> bool:
+                return True
+
+            def mark_checked(self, session_id: str) -> None:
+                return None
+
+            def upsert(self, record: dict[str, object]) -> None:
+                self.records.append(record)
+
+        store = FakeStore()
+        refresh_cache(client=FakeClient(), store=store, lookback_days=1)
+
+        self.assertEqual(len(store.records), 1)
+        self.assertIn("scan_profile", store.records[0])
+        self.assertIsInstance(store.records[0]["scan_profile"], str)
+        self.assertNotEqual(store.records[0]["scan_profile"], "")
 
     def test_extract_archive_session_handles_eattrs_like_values(self) -> None:
         class Attrs:
@@ -123,6 +164,44 @@ class IngestionWorkflowTests(unittest.TestCase):
         self.assertEqual(record["session_id"], "SESSION5")
         self.assertEqual(record["subject_id"], "")
         self.assertEqual(record["project_id"], "")
+
+    def test_fetch_prearchive_metadata_filters_by_uploaded_date(self) -> None:
+        class FakeResponse:
+            def __init__(self, payload: dict[str, object]) -> None:
+                self._payload = payload
+
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict[str, object]:
+                return self._payload
+
+        class FakeSession:
+            def __init__(self, payload: dict[str, object]) -> None:
+                self.auth = None
+                self._payload = payload
+
+            def get(self, url: str, timeout: int = 30) -> FakeResponse:
+                return FakeResponse(self._payload)
+
+        payload = {
+            "ResultSet": {
+                "Result": [
+                    {"subject": "SUBJ7", "project": "PROJ7", "scan_date": "2026-06-28", "uploaded": "2026-06-29 12:00:00"},
+                    {"subject": "SUBJ8", "project": "PROJ8", "scan_date": "2026-06-30", "uploaded": "2025-06-01 00:00:00"},
+                    {"subject": "SUBJ9", "project": "PROJ9", "scan_date": "2026-06-30", "uploaded": "2026-06-30 00:00:00"},
+                ]
+            }
+        }
+
+        client = XNATClient("https://example.test", lookback_days=365)
+
+        with patch("xnat_audit.ingestion.client.requests", type("FakeRequests", (), {"Session": lambda: FakeSession(payload)})), patch.object(XNATClient, "_load_credentials", return_value=(None, None)):
+            rows = client._fetch_prearchive_metadata("2026-06-01", "2026-06-30")
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["subject"], "SUBJ7")
+        self.assertEqual(rows[1]["subject"], "SUBJ9")
 
     def test_get_archive_sessions_filters_before_expansion(self) -> None:
         class FakeSelector:

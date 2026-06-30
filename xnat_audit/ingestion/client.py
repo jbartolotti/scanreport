@@ -217,7 +217,7 @@ class XNATClient:
             surviving_rows: list[dict[str, Any]] = []
 
             for row in metadata_rows:
-                row_date = self._coerce_date(str(row.get("scan_date", "")) if row.get("scan_date") is not None else None)
+                row_date = self._coerce_date(str(row.get("uploaded", "")) if row.get("uploaded") is not None else None)
                 if row_date is None:
                     continue
                 if row_date < lookback_cutoff:
@@ -493,21 +493,21 @@ class XNATClient:
             if row is None:
                 continue
 
-            scan_date = self._coerce_date(
-                str(row.get("scan_date", ""))
+            uploaded = self._coerce_date(
+                str(row.get("uploaded", ""))
             )
 
-            if scan_date is None:
+            if uploaded is None:
                 logger.debug(
-                    "Skipping prearchive item with no parseable date: %s",
+                    "Skipping prearchive item with no parseable uploaded date: %s",
                     row,
                 )
                 continue
 
-            if start_dt and scan_date < start_dt:
+            if start_dt and uploaded < start_dt:
                 continue
 
-            if end_dt and scan_date > end_dt:
+            if end_dt and uploaded > end_dt:
                 continue
 
             rows.append(row)

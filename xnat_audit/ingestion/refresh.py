@@ -28,10 +28,9 @@ def refresh_cache(*, client: Any, store: Any, lookback_days: int) -> dict[str, i
         signature = compute_signature(session)
         sessions_processed += 1
         if store.has_changed(session.session_id, signature):
-            start_time, end_time, dicom_count = compute_session_times(session)
+            start_time, end_time, dicom_count, scan_profile = compute_session_times(session)
             session.start_time = start_time
             session.end_time = end_time
-            scan_profile = "|".join(sorted({scan.normalized_name for scan in session.scans if scan.normalized_name}))
             record = {
                 "session_id": session.session_id,
                 "project_id": session.project_id,
