@@ -9,6 +9,8 @@ from ..models.enums import SessionOrigin, SessionState
 from ..utils import coerce_date
 
 logger = logging.getLogger(__name__)
+_EXTRACT_DEBUG_COUNT = 0
+_SCAN_DEBUG_COUNT = 0
 
 
 def _coerce_date(value: Any) -> str | None:
@@ -35,6 +37,18 @@ def _coerce_scans(raw: Any) -> list[dict[str, Any]]:
         for key, value in raw.items():
             if isinstance(value, dict):
                 scans.append({"sequence_name": str(key), "dicom_count": int(value.get("dicom_count") or 0)})
+
+    global _SCAN_DEBUG_COUNT
+    if logger.isEnabledFor(logging.DEBUG) and _SCAN_DEBUG_COUNT < 3:
+        logger.debug(
+            "_coerce_scans: input_type=%s input_count=%d output_count=%d",
+            type(raw).__name__,
+            len(raw) if hasattr(raw, "__len__") else 1,
+            len(scans),
+        )
+        if scans:
+            logger.debug("first scan: %s", scans[0])
+        _SCAN_DEBUG_COUNT += 1
     return scans
 
 
@@ -108,7 +122,7 @@ def extract_archive_session(raw: Any) -> dict[str, Any] | None:
     if not session_id:
         return None
 
-    return {
+    record = {
         "subject_id": str(_read_attribute(raw, attrs, "subject_id", "subject", "subjectId") or ""),
         "project_id": str(_read_attribute(raw, attrs, "project_id", "project", "projectId") or ""),
         "session_id": session_id,
@@ -117,6 +131,16 @@ def extract_archive_session(raw: Any) -> dict[str, Any] | None:
         "state": SessionState.ARCHIVED.value,
         "scans": _coerce_scans(_read_attribute(raw, attrs, "scans", "scan_data")),
     }
+
+    global _EXTRACT_DEBUG_COUNT
+    if logger.isEnabledFor(logging.DEBUG) and _EXTRACT_DEBUG_COUNT < 3:
+        scan_count = len(record.get("scans", []) or [])
+        logger.debug("extract_archive_session: session_id=%s scan_count=%d", session_id, scan_count)
+        logger.debug("extract_archive_session keys: %s", sorted(record.keys()))
+        if scan_count:
+            logger.debug("extract_archive_session first scan: %s", record["scans"][0])
+        _EXTRACT_DEBUG_COUNT += 1
+    return record
 
 
 def extract_prearchive_session(raw: Any) -> dict[str, Any] | None:
@@ -132,7 +156,7 @@ def extract_prearchive_session(raw: Any) -> dict[str, Any] | None:
     if not session_id:
         return None
 
-    return {
+    record = {
         "subject_id": str(_read_attribute(raw, attrs, "subject_id", "subject", "subjectId") or ""),
         "project_id": str(_read_attribute(raw, attrs, "project_id", "project", "projectId") or ""),
         "session_id": session_id,
@@ -141,3 +165,13 @@ def extract_prearchive_session(raw: Any) -> dict[str, Any] | None:
         "state": SessionState.PREARCHIVE.value,
         "scans": _coerce_scans(_read_attribute(raw, attrs, "scans", "scan_data")),
     }
+
+    global _EXTRACT_DEBUG_COUNT
+    if logger.isEnabledFor(logging.DEBUG) and _EXTRACT_DEBUG_COUNT < 3:
+        scan_count = len(record.get("scans", []) or [])
+        logger.debug("extract_prearchive_session: session_id=%s scan_count=%d", session_id, scan_count)
+        logger.debug("extract_prearchive_session keys: %s", sorted(record.keys()))
+        if scan_count:
+            logger.debug("extract_prearchive_session first scan: %s", record["scans"][0])
+        _EXTRACT_DEBUG_COUNT += 1
+    return record

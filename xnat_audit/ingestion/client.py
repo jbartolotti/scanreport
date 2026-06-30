@@ -31,6 +31,7 @@ from .refresh import refresh_cache
 
 logger = logging.getLogger(__name__)
 REQUEST_LOGGING_INSTALLED = False
+_DETAIL_DEBUG_COUNT = 0
 
 
 class XNATClient:
@@ -557,6 +558,28 @@ class XNATClient:
             "url": str(row.get("url", "") or ""),
         }
 
+    def _collect_scan_candidates(self, payload: Any) -> list[Any]:
+        """Recursively collect scan-like payloads from a detail response for debug tracing."""
+        if isinstance(payload, dict):
+            candidates: list[Any] = []
+            for key, value in payload.items():
+                if key in {"scans", "scan", "scan_data"}:
+                    if isinstance(value, list):
+                        candidates.extend(value)
+                    elif isinstance(value, dict):
+                        candidates.append(value)
+                    elif value is not None:
+                        candidates.append(value)
+                elif isinstance(value, (dict, list)):
+                    candidates.extend(self._collect_scan_candidates(value))
+            return candidates
+        if isinstance(payload, list):
+            candidates = []
+            for item in payload:
+                candidates.extend(self._collect_scan_candidates(item))
+            return candidates
+        return []
+
     def _fetch_experiment_details(self, experiment_id: Any) -> dict[str, Any] | None:
         """Fetch a single experiment's detailed metadata for surviving sessions."""
         if experiment_id is None:
@@ -580,7 +603,16 @@ class XNATClient:
             payload = response.json()
         except Exception:
             payload = None
+
         if isinstance(payload, dict):
+            global _DETAIL_DEBUG_COUNT
+            if logger.isEnabledFor(logging.DEBUG) and _DETAIL_DEBUG_COUNT < 3:
+                scan_candidates = self._collect_scan_candidates(payload)
+                logger.debug("Session %s detail keys: %s", experiment_id, list(payload.keys()))
+                logger.debug("Session %s scan information located: %s", experiment_id, bool(scan_candidates))
+                if scan_candidates:
+                    logger.debug("Session %s raw scan count: %d", experiment_id, len(scan_candidates))
+                _DETAIL_DEBUG_COUNT += 1
             return payload
         return None
 
