@@ -157,7 +157,7 @@ class XNATClient:
             processed_rows: list[dict[str, Any]] = []
             fully_processed_count = 0
             for row in surviving_rows:
-                detail = self._fetch_experiment_details(interface, row.get("id"))
+                detail = self._fetch_experiment_details(row.get("id"))
                 self.request_metrics["detailed_experiment_requests"] += 1
                 record = self._build_archive_record(row, detail)
                 if record is not None:
@@ -207,28 +207,43 @@ class XNATClient:
             return []
 
     def get_prearchive_sessions(self, start_date: str, end_date: str) -> list[dict[str, Any]]:
-        """Fetch sessions from the XNAT prearchive for the requested date range."""
-        interface = self.connect()
+        """Fetch sessions from the XNAT prearchive for the requested date range via the REST API."""
+        self.connect()
         try:
-            candidates = []
-            for attr_name in ("prearchive", "sessions", "experiments"):
-                items = self._list_collection(interface.select, attr_name)
-                print(
-                    f"{attr_name}: {len(items)} candidates"
-                )
-                candidates.extend(self._list_collection(interface.select, attr_name))
-            rows: list[dict[str, Any]] = []
-            print(f"[xnat_audit] Inspecting {len(candidates)} prearchive candidate item(s)")
-            for item in candidates:
-                try:
-                    record = extract_prearchive_session(item)
-                except Exception as exc:  # pragma: no cover - depends on runtime environment
-                    logger.warning("Skipping prearchive item due to extraction error: %s", exc)
+            metadata_rows = self._fetch_prearchive_metadata(start_date, end_date)
+            discovered_count = len(metadata_rows)
+            lookback_cutoff = date.today() - timedelta(days=self.lookback_days)
+            surviving_rows: list[dict[str, Any]] = []
+
+            for row in metadata_rows:
+                row_date = self._coerce_date(str(row.get("scan_date", "")) if row.get("scan_date") is not None else None)
+                if row_date is None:
                     continue
+                if row_date < lookback_cutoff:
+                    continue
+                surviving_rows.append(row)
+
+            processed_rows: list[dict[str, Any]] = []
+            processed_count = 0
+            for row in surviving_rows:
+                record = self._build_prearchive_record(row)
                 if record is not None:
-                    rows.append(record)
-            print(f"[xnat_audit] Retrieved {len(rows)} prearchive session(s)")
-            return rows
+                    processed_rows.append(record)
+                    processed_count += 1
+
+            print(
+                "[xnat_audit] Prearchive query diagnostics: "
+                f"sessions_discovered={discovered_count}, sessions_surviving_filter={len(surviving_rows)}, "
+                f"sessions_processed={processed_count}"
+            )
+            logger.info(
+                "Prearchive query diagnostics: sessions_discovered=%d sessions_surviving_filter=%d sessions_processed=%d",
+                discovered_count,
+                len(surviving_rows),
+                processed_count,
+            )
+            print(f"[xnat_audit] Retrieved {len(processed_rows)} prearchive session(s)")
+            return processed_rows
         except Exception as exc:  # pragma: no cover - depends on runtime environment
             logger.exception("Prearchive session query failed")
             print(f"[xnat_audit] Prearchive query failed: {exc}")
@@ -425,7 +440,83 @@ class XNATClient:
             "date": "",
         }
 
-    def _fetch_experiment_details(self, interface: Any, experiment_id: Any) -> dict[str, Any] | None:
+    def _fetch_prearchive_metadata(self, start_date: str, end_date: str) -> list[dict[str, Any]]:
+        """Fetch prearchive metadata from the XNAT REST API without pyxnat selectors."""
+        if requests is None:
+            return []
+
+        username, password = self._load_credentials()
+        session = requests.Session()
+        if username and password:
+            session.auth = (username, password)
+
+        url = f"{self.base_url}/data/prearchive/projects?format=json"
+        try:
+            response = session.get(url, timeout=30)
+            response.raise_for_status()
+        except Exception as exc:
+            logger.warning("Prearchive metadata fetch failed: %s", exc)
+            return []
+
+        try:
+            payload = response.json()
+        except Exception:
+            payload = None
+
+        if not isinstance(payload, list):
+            return []
+
+        rows: list[dict[str, Any]] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            row = self._normalize_prearchive_row(item)
+            if row is None:
+                continue
+            if start_date and self._coerce_date(str(row.get("scan_date", ""))) and self._coerce_date(str(row.get("scan_date", ""))) < self._coerce_date(start_date):
+                continue
+            if end_date and self._coerce_date(str(row.get("scan_date", ""))) and self._coerce_date(str(row.get("scan_date", ""))) > self._coerce_date(end_date):
+                continue
+            rows.append(row)
+        return rows
+
+    def _normalize_prearchive_row(self, item: dict[str, Any]) -> dict[str, Any] | None:
+        """Normalize a single prearchive metadata item into a lightweight row."""
+        subject = self._first_non_empty(item, ["subject", "subject_id", "Subject", "Subject ID"])
+        project = self._first_non_empty(item, ["project", "project_id", "Project", "Project ID"])
+        scan_date = self._first_non_empty(item, ["scan_date", "scanDate", "date", "Date"])
+        scan_time = self._first_non_empty(item, ["scan_time", "scanTime", "time", "Time"])
+        uploaded = self._first_non_empty(item, ["uploaded", "Uploaded", "upload_time", "Upload Time"])
+        status = self._first_non_empty(item, ["status", "Status"])
+        url = self._first_non_empty(item, ["url", "URL", "uri", "URI"])
+        if subject is None and project is None and scan_date is None:
+            return None
+        return {
+            "subject": str(subject) if subject is not None else "",
+            "project": str(project) if project is not None else "",
+            "scan_date": str(scan_date) if scan_date is not None else "",
+            "scan_time": str(scan_time) if scan_time is not None else "",
+            "uploaded": str(uploaded) if uploaded is not None else "",
+            "status": str(status) if status is not None else "",
+            "url": str(url) if url is not None else "",
+        }
+
+    def _build_prearchive_record(self, row: dict[str, Any]) -> dict[str, Any] | None:
+        """Construct a normalized record for a surviving prearchive item."""
+        if not row:
+            return None
+        return {
+            "session_id": f"prearchive:{row.get('subject', '')}:{row.get('project', '')}:{row.get('scan_date', '')}:{row.get('scan_time', '')}",
+            "subject_id": str(row.get("subject", "") or ""),
+            "project_id": str(row.get("project", "") or ""),
+            "date": str(row.get("scan_date", "") or ""),
+            "label": str(row.get("status", "") or ""),
+            "origin": "INTERNAL",
+            "state": "PREARCHIVE",
+            "url": str(row.get("url", "") or ""),
+        }
+
+    def _fetch_experiment_details(self, experiment_id: Any) -> dict[str, Any] | None:
         """Fetch a single experiment's detailed metadata for surviving sessions."""
         if experiment_id is None:
             return None
