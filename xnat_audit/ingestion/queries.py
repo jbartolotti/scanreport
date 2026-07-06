@@ -105,7 +105,7 @@ def _coerce_scans(raw: Any) -> list[dict[str, Any]]:
         data_fields = item.get("data_fields")
         if not isinstance(data_fields, dict):
             data_fields = {}
-
+        print(data_fields)
         sequence_number = _extract_data_field_value(data_fields, "ID", "id", "sequence_id")
         protocol_name = _extract_data_field_value(data_fields, "protocolName", "protocol_name")
         series_description = _extract_data_field_value(data_fields, "series_description", "seriesDescription")
