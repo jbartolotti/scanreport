@@ -14,4 +14,4 @@ dependencies = ["pyxnat>=0.6", "nibabel","pandas"]
 include = ["xnat_audit*"]
 
 [tool.setuptools.package-data]
-xnat_audit.reporting = ["templates/*.html", "static/*.css"]
+"xnat_audit.reporting" = ["templates/*.html", "static/*.css"]
