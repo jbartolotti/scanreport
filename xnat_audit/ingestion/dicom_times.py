@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from asyncio.log import logger
 import hashlib
 import json
 from datetime import datetime, time, timedelta
@@ -57,11 +58,27 @@ def compute_session_times(
 
     for scan in session.scans:
 
+
+        logger.debug(
+            "scan=%s start_time=%r frames=%r tr=%r dicom_count=%r",
+            getattr(scan, "sequence_name", None),
+            getattr(scan, "start_time", None),
+            getattr(scan, "frames", None),
+            getattr(scan, "tr", None),
+            getattr(scan, "dicom_count", None),
+        )
+
+
         total_dicom_count += max(0, scan.dicom_count)
 
         scan_start = getattr(scan, "start_time", None)
         if isinstance(scan_start, str):
             scan_start = coerce_datetime(scan_start)
+        logger.debug(
+            "Parsed start_time %r -> %r",
+            getattr(scan, "start_time", None),
+            scan_start,
+        )
         frames = getattr(scan, "frames", None)
         tr = getattr(scan, "tr", None)
 
