@@ -24,7 +24,7 @@ except ImportError:  # pragma: no cover - exercised when pyxnat is unavailable.
 
 from ..normalization.normalize import normalize_session
 from ..models.session import Session
-from ..utils import coerce_date
+from ..utils import coerce_date, coerce_time
 from .dicom_times import compute_session_times, compute_signature
 from .queries import _coerce_scans, extract_archive_session, extract_prearchive_session
 from .refresh import refresh_cache
@@ -543,6 +543,16 @@ class XNATClient:
             "url": str(url) if url is not None else "",
         }
 
+    def _build_prearchive_session_id(self, row: dict[str, Any]) -> str:
+        """Create a stable prearchive session identifier from the metadata row."""
+        parts = [
+            str(row.get("subject", "") or ""),
+            str(row.get("project", "") or ""),
+            str(row.get("scan_date", "") or ""),
+            str(row.get("scan_time", "") or ""),
+        ]
+        return "prearchive:" + ":".join(part for part in parts if part)
+
     def _build_prearchive_detail_url(self, row: dict[str, Any], suffix: str) -> str | None:
         """Build a session-specific prearchive endpoint URL for scans or resources."""
         raw_url = str(row.get("url", "") or "").strip()
@@ -616,6 +626,15 @@ class XNATClient:
         if not row:
             return None
 
+        session_id = self._build_prearchive_session_id(row)
+        scan_date = str(row.get("scan_date", "") or "")
+        scan_time = str(row.get("scan_time", "") or "")
+        fallback_start_time = None
+        parsed_date = coerce_date(scan_date)
+        parsed_time = coerce_time(scan_time)
+        if parsed_date is not None and parsed_time is not None:
+            fallback_start_time = datetime.combine(parsed_date, parsed_time)
+
         scan_rows = self._fetch_prearchive_detail_payload(row, "scans")
         resource_rows = self._fetch_prearchive_detail_payload(row, "resources")
 
@@ -627,38 +646,52 @@ class XNATClient:
             resource_lookup[str(cat_id)] = resource
 
         scans: list[dict[str, Any]] = []
-        for scan in scan_rows:
-            sequence_number = self._first_non_empty(scan, ["ID", "id", "sequence_id", "sequenceNumber", "sequence_number"])
-            series_description = self._first_non_empty(scan, ["series_description", "seriesDescription", "name", "label"])
-            resource = resource_lookup.get(str(sequence_number)) if sequence_number is not None else None
-            file_count = 0
-            if resource is not None:
-                file_count_value = self._first_non_empty(resource, ["file_count", "fileCount", "count"])
-                if file_count_value is not None:
-                    try:
-                        file_count = int(file_count_value)
-                    except (TypeError, ValueError):
-                        file_count = 0
+        if not scan_rows:
+            logger.debug("Prearchive enrichment failed for %s; using scan_date/scan_time fallback", session_id)
             scans.append(
                 {
-                    "sequence_name": str(series_description or sequence_number or ""),
-                    "sequence_number": str(sequence_number) if sequence_number is not None else None,
-                    "series_description": str(series_description) if series_description is not None else None,
-                    "start_date": str(row.get("scan_date", "") or ""),
-                    "start_time": str(row.get("scan_time", "") or ""),
-                    "dicom_count": file_count,
+                    "sequence_name": str(row.get("status", "") or "prearchive"),
+                    "sequence_number": None,
+                    "series_description": None,
+                    "start_date": scan_date,
+                    "start_time": scan_time,
+                    "dicom_count": 0,
                 }
             )
+        else:
+            for scan in scan_rows:
+                sequence_number = self._first_non_empty(scan, ["ID", "id", "sequence_id", "sequenceNumber", "sequence_number"])
+                series_description = self._first_non_empty(scan, ["series_description", "seriesDescription", "name", "label"])
+                resource = resource_lookup.get(str(sequence_number)) if sequence_number is not None else None
+                file_count = 0
+                if resource is not None:
+                    file_count_value = self._first_non_empty(resource, ["file_count", "fileCount", "count"])
+                    if file_count_value is not None:
+                        try:
+                            file_count = int(file_count_value)
+                        except (TypeError, ValueError):
+                            file_count = 0
+                scans.append(
+                    {
+                        "sequence_name": str(series_description or sequence_number or ""),
+                        "sequence_number": str(sequence_number) if sequence_number is not None else None,
+                        "series_description": str(series_description) if series_description is not None else None,
+                        "start_date": scan_date,
+                        "start_time": scan_time,
+                        "dicom_count": file_count,
+                    }
+                )
 
         return {
-            "session_id": str(row.get('subject', "") or ""), 
+            "session_id": session_id,
             "subject_id": str(row.get("subject", "") or ""),
             "project_id": str(row.get("project", "") or ""),
-            "date": str(row.get("scan_date", "") or ""),
+            "date": scan_date,
             "label": str(row.get("status", "") or ""),
             "origin": "INTERNAL",
             "state": "PREARCHIVE",
             "url": str(row.get("url", "") or ""),
+            "start_time": fallback_start_time,
             "scans": scans,
         }
 

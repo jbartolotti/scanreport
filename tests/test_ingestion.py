@@ -356,6 +356,46 @@ class IngestionWorkflowTests(unittest.TestCase):
         self.assertEqual(record["scans"][0]["series_description"], "MPRAGE")
         self.assertEqual(record["scans"][0]["dicom_count"], 12)
 
+    def test_build_prearchive_record_uses_scan_date_time_fallback_when_enrichment_fails(self) -> None:
+        class FakeResponse:
+            def __init__(self, payload: dict[str, object]) -> None:
+                self._payload = payload
+
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict[str, object]:
+                return self._payload
+
+        class FakeSession:
+            def __init__(self, payload: dict[str, object]) -> None:
+                self.auth = None
+                self._payload = payload
+
+            def get(self, url: str, timeout: int = 30) -> FakeResponse:
+                raise RuntimeError("boom")
+
+        client = XNATClient("https://example.test", lookback_days=365)
+
+        with patch("xnat_audit.ingestion.client.requests", type("FakeRequests", (), {"Session": lambda: FakeSession({})})), patch.object(XNATClient, "_load_credentials", return_value=(None, None)):
+            record = client._build_prearchive_record(
+                {
+                    "subject": "SUBJ11",
+                    "project": "PROJ11",
+                    "scan_date": "2026-06-30",
+                    "scan_time": "09:00:00",
+                    "uploaded": "2026-06-30 00:00:00",
+                    "status": "READY",
+                    "url": "https://example.test/data/prearchive/projects/PROJ11/20260630/SESSION11",
+                }
+            )
+
+        self.assertIsNotNone(record)
+        self.assertEqual(record["session_id"], "prearchive:SUBJ11:PROJ11:2026-06-30:09:00:00")
+        self.assertEqual(len(record["scans"]), 1)
+        self.assertEqual(record["scans"][0]["start_date"], "2026-06-30")
+        self.assertEqual(record["scans"][0]["start_time"], "09:00:00")
+
     def test_get_archive_sessions_filters_before_expansion(self) -> None:
         class FakeSelector:
             def __init__(self, items: list[object]) -> None:
