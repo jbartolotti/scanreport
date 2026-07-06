@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import date, timedelta
+from importlib import resources
 from pathlib import Path
+from shutil import copyfile
 from typing import Any
 
 from .html import build_timeline_events, render_html_report
+
+logger = logging.getLogger("xnat_audit")
 
 
 def _resolve_week_start(report_date: date | None, report_week: date | None) -> date:
@@ -41,9 +46,30 @@ def generate_report(*, store: Any, report_date: date | None = None, report_week:
         "pixels_per_minute": 1,
     }
 
-    output_path = Path.cwd() / "report.html"
+    output_dir = Path.cwd()
+    output_path = output_dir / "report.html"
     output_path.write_text(render_html_report(report_payload), encoding="utf-8")
+
+    css_source = None
+    try:
+        css_source = resources.files("xnat_audit.reporting").joinpath("static/report.css")
+        if css_source.is_file():
+            css_bytes = css_source.read_bytes()
+            css_output_path = output_dir / "report.css"
+            css_output_path.write_bytes(css_bytes)
+            logger.debug("Copied report stylesheet to %s", css_output_path)
+    except (AttributeError, FileNotFoundError, ModuleNotFoundError):
+        css_source = None
+
+    if css_source is None:
+        source_css_path = Path(__file__).resolve().parent / "static" / "report.css"
+        if source_css_path.is_file():
+            css_output_path = output_dir / "report.css"
+            copyfile(source_css_path, css_output_path)
+            logger.debug("Copied report stylesheet to %s", css_output_path)
+
     report_payload["output_path"] = output_path
+    report_payload["css_output_path"] = output_dir / "report.css"
     return report_payload
 
 
