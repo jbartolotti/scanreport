@@ -144,6 +144,33 @@ class IngestionWorkflowTests(unittest.TestCase):
         self.assertLessEqual(start_time, end_time)
         self.assertIsInstance(scan_profile, str)
 
+    def test_compute_session_times_combines_scan_date_and_time(self) -> None:
+        session = Session(
+            subject_id="SUBJ8",
+            project_id="PROJ8",
+            session_id="SESSION8",
+            date=date(2026, 6, 30),
+            origin=SessionOrigin.INTERNAL,
+            state=SessionState.ARCHIVED,
+            scans=[
+                Scan(
+                    sequence_name="T1",
+                    normalized_name="t1",
+                    dicom_count=3,
+                    start_date=date(2026, 6, 30),
+                    start_time="09:00:00",
+                    frames=100,
+                    tr=3.0,
+                )
+            ],
+        )
+
+        start_time, end_time, dicom_count, _ = compute_session_times(session)
+
+        self.assertEqual(start_time, datetime(2026, 6, 30, 9, 0, 0))
+        self.assertEqual(end_time, datetime(2026, 6, 30, 9, 0, 0, 300000))
+        self.assertEqual(dicom_count, 3)
+
     def test_refresh_cache_writes_scan_profile_from_compute_session_times(self) -> None:
         class FakeClient:
             def get_archive_sessions(self, start_date: str, end_date: str) -> list[dict[str, object]]:

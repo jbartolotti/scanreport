@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Any
 
 
@@ -86,5 +86,44 @@ def coerce_datetime(value: Any) -> datetime | None:
 
     try:
         return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def coerce_time(value: Any) -> time | None:
+    """Parse common XNAT-style time values into a time object."""
+    if value is None:
+        return None
+
+    if isinstance(value, time):
+        return value
+
+    if isinstance(value, datetime):
+        return value.time()
+
+    if isinstance(value, date):
+        return datetime.min.time()
+
+    if not isinstance(value, str):
+        value = str(value)
+
+    value = value.strip()
+    if not value:
+        return None
+
+    for fmt in (
+        "%H:%M:%S.%f",
+        "%H:%M:%S",
+        "%H:%M",
+        "%I:%M:%S %p",
+        "%I:%M %p",
+    ):
+        try:
+            return datetime.strptime(value, fmt).time()
+        except ValueError:
+            continue
+
+    try:
+        return datetime.fromisoformat(value).time()
     except ValueError:
         return None

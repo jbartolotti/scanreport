@@ -9,7 +9,7 @@ from typing import Any, Mapping
 from ..models.enums import SessionOrigin, SessionState
 from ..models.scan import Scan
 from ..models.session import Session
-from ..utils import coerce_date, coerce_datetime
+from ..utils import coerce_date
 from .naming import normalize_sequence_name
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ def normalize_session(raw: Mapping[str, Any]) -> Session:
                 sequence_number=scan.get("sequence_number"),
                 protocol_name=scan.get("protocol_name"),
                 series_description=scan.get("series_description"),
-                start_time=coerce_datetime(raw_start_time),
+                start_time=raw_start_time,
                 start_date=coerce_date(scan.get("start_date")),
                 frames=frames,
                 tr=tr,

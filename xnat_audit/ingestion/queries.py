@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from ..models.enums import SessionOrigin, SessionState
-from ..utils import coerce_date, coerce_datetime
+from ..utils import coerce_date
 
 logger = logging.getLogger(__name__)
 _EXTRACT_DEBUG_COUNT = 0
@@ -113,11 +113,9 @@ def _coerce_scans(raw: Any) -> list[dict[str, Any]]:
         start_date = _extract_data_field_value(data_fields, "start_date", "startDate")
         frames = _extract_data_field_value(data_fields, "frames")
         tr = _extract_data_field_value(data_fields, "parameters/tr", "tr")
-        coerced_start_time = coerce_datetime(raw_start_time)
         logger.debug(
-            "_coerce_scans start_time pre=%r post=%r",
+            "_coerce_scans start_time raw=%r",
             raw_start_time,
-            coerced_start_time,
         )
 
         try:
@@ -147,7 +145,7 @@ def _coerce_scans(raw: Any) -> list[dict[str, Any]]:
                 "sequence_number": sequence_number,
                 "protocol_name": protocol_name,
                 "series_description": series_description,
-                "start_time": coerced_start_time,
+                "start_time": raw_start_time,
                 "start_date": coerce_date(start_date),
                 "frames": frame_value,
                 "tr": tr_value,
