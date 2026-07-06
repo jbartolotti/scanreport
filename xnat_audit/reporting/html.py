@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 from html import escape
+from importlib import resources
 from pathlib import Path
 from string import Template
 from typing import Any, Mapping
@@ -114,10 +115,31 @@ def _build_calendar_rows(week_start: date, sessions: list[Mapping[str, Any]]) ->
     return "\n".join(rows)
 
 
+def _read_report_asset(relative_path: str) -> str:
+    """Read a packaged report asset from either the source tree or an installed package."""
+    package_root = Path(__file__).resolve().parent
+    candidates = [
+        package_root / relative_path,
+        Path.cwd() / relative_path,
+        Path.cwd() / "xnat_audit" / relative_path,
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.read_text(encoding="utf-8")
+
+    try:
+        resource = resources.files("xnat_audit.reporting").joinpath(relative_path)
+        if resource.is_file():
+            return resource.read_text(encoding="utf-8")
+    except (AttributeError, FileNotFoundError, ModuleNotFoundError):
+        pass
+
+    raise FileNotFoundError(f"Missing report asset: {relative_path}")
+
+
 def render_html_report(report_data: Mapping[str, Any], title: str = "Weekly Report") -> str:
     """Render a weekly calendar-style HTML report from a report payload."""
-    template_path = Path(__file__).resolve().parent / "templates" / "weekly_report.html"
-    template_text = template_path.read_text(encoding="utf-8")
+    template_text = _read_report_asset("templates/weekly_report.html")
     week_start = report_data.get("week_start")
     week_end = report_data.get("week_end")
     sessions = list(report_data.get("sessions") or [])
