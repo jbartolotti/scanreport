@@ -141,7 +141,7 @@ def _coerce_scans(raw: Any) -> list[dict[str, Any]]:
                 "sequence_number": sequence_number,
                 "protocol_name": protocol_name,
                 "series_description": series_description,
-                "start_time": coerce_datetime(start_time),
+                "start_time": start_time,
                 "start_date": coerce_date(start_date),
                 "frames": frame_value,
                 "tr": tr_value,
