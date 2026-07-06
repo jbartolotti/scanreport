@@ -110,6 +110,46 @@ class ConfigCliTests(unittest.TestCase):
             self.assertEqual(report["session_count"], 1)
             self.assertEqual(report["sessions"][0]["session_id"], "S1")
 
+    def test_main_generates_weekly_html_report_from_sqlite_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = str(Path(tmp_dir) / "registry.db")
+            config_path = Path(tmp_dir) / "config.json"
+            config_path.write_text(json.dumps({"sqlite_db_path": db_path}), encoding="utf-8")
+
+            previous_cwd = os.getcwd()
+            try:
+                os.chdir(tmp_dir)
+                store = SessionTimeStore(db_path)
+                store.upsert(
+                    {
+                        "session_id": "S2",
+                        "project_id": "P2",
+                        "state": "PREARCHIVE",
+                        "start_time": "2026-06-29T09:00:00+00:00",
+                        "end_time": None,
+                        "dicom_count": 7,
+                        "scan_profile": "t2",
+                        "signature": "sig2",
+                        "last_checked": "2026-06-29T00:00:00+00:00",
+                    }
+                )
+                store.close()
+
+                with patch("sys.stdout", new_callable=io.StringIO) as stdout:
+                    exit_code = main(["report", "--week", "2026-06-29", str(config_path)])
+            finally:
+                os.chdir(previous_cwd)
+
+            self.assertEqual(exit_code, 0)
+            report_path = Path(tmp_dir) / "report.html"
+            self.assertTrue(report_path.exists())
+            html = report_path.read_text(encoding="utf-8")
+            self.assertIn("Weekly Report", html)
+            self.assertIn("P2", html)
+            self.assertIn("S2", html)
+            self.assertIn("PREARCHIVE", html)
+            self.assertIn("report-week", html)
+
 
 if __name__ == "__main__":
     unittest.main()

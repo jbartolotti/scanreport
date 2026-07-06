@@ -1,0 +1,138 @@
+body {
+  margin: 0;
+  font-family: "Segoe UI", Arial, sans-serif;
+  background: #f4f7fb;
+  color: #203040;
+}
+
+.report-shell {
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.summary-panel {
+  background: white;
+  border-radius: 12px;
+  padding: 20px 24px;
+  box-shadow: 0 8px 20px rgba(31, 41, 55, 0.08);
+  margin-bottom: 20px;
+}
+
+.summary-panel__title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.summary-card {
+  background: #eef4ff;
+  border: 1px solid #dbe8ff;
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.summary-card__label {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #5b6b82;
+}
+
+.summary-card__value {
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+.calendar-panel {
+  background: white;
+  border-radius: 12px;
+  padding: 16px;
+  overflow-x: auto;
+  box-shadow: 0 8px 20px rgba(31, 41, 55, 0.08);
+}
+
+.weekly-calendar {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 960px;
+}
+
+.weekly-calendar th,
+.weekly-calendar td {
+  border: 1px solid #dfe7f0;
+  vertical-align: top;
+  padding: 6px;
+}
+
+.weekly-calendar thead th {
+  background: #f7f9fc;
+  font-weight: 600;
+  text-align: center;
+}
+
+.calendar-time-header {
+  width: 80px;
+  text-align: right;
+}
+
+.calendar-cell {
+  width: 130px;
+  min-height: 54px;
+  background: #fcfdff;
+}
+
+.calendar-cell--empty {
+  background: #fafbfc;
+}
+
+.calendar-cell__events {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.calendar-event {
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 0.78rem;
+  color: white;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  line-height: 1.2;
+}
+
+.calendar-event--archived {
+  background: #2b6cb0;
+}
+
+.calendar-event--prearchive {
+  background: #dd6b20;
+}
+
+.calendar-event--unknown {
+  background: #718096;
+}
+
+.calendar-event--point {
+  border: 2px solid rgba(255, 255, 255, 0.3);
+}
+
+.calendar-event__project {
+  font-weight: 600;
+}
+
+.calendar-event__time,
+.calendar-event__state {
+  opacity: 0.95;
+}

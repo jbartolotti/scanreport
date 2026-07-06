@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>$title</title>
+    <link rel="stylesheet" href="xnat_audit/reporting/static/report.css" />
+  </head>
+  <body>
+    <main class="report-shell">
+      <header class="summary-panel">
+        <div class="summary-panel__title">$title</div>
+        <div class="summary-grid">
+          <div class="summary-card">
+            <span class="summary-card__label">Report week</span>
+            <span class="summary-card__value report-week">$report_week</span>
+          </div>
+          <div class="summary-card">
+            <span class="summary-card__label">Archive sessions</span>
+            <span class="summary-card__value">$archive_count</span>
+          </div>
+          <div class="summary-card">
+            <span class="summary-card__label">Prearchive sessions</span>
+            <span class="summary-card__value">$prearchive_count</span>
+          </div>
+          <div class="summary-card">
+            <span class="summary-card__label">Total sessions</span>
+            <span class="summary-card__value">$total_count</span>
+          </div>
+        </div>
+      </header>
+
+      <section class="calendar-panel">
+        <table class="weekly-calendar">
+          <thead>
+            <tr>
+              <th scope="col" class="calendar-time-header">Time</th>
+              $day_headers
+            </tr>
+          </thead>
+          <tbody>
+            $calendar_rows
+          </tbody>
+        </table>
+      </section>
+    </main>
+  </body>
+</html>
