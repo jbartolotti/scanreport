@@ -552,9 +552,17 @@ class XNATClient:
         parsed = urlparse(raw_url)
         if parsed.scheme and parsed.netloc:
             base_path = parsed.path.rstrip("/")
+            if base_path.startswith("/data/"):
+                return f"{parsed.scheme}://{parsed.netloc}{base_path}/{suffix}?format=json"
+            if base_path.startswith("/prearchive/"):
+                return f"{parsed.scheme}://{parsed.netloc}/data{base_path}/{suffix}?format=json"
             return f"{parsed.scheme}://{parsed.netloc}{base_path}/{suffix}?format=json"
 
         if raw_url.startswith("/"):
+            if raw_url.startswith("/data/"):
+                return f"{self.base_url}{raw_url.rstrip('/')}/{suffix}?format=json"
+            if raw_url.startswith("/prearchive/"):
+                return f"{self.base_url}/data{raw_url.rstrip('/')}/{suffix}?format=json"
             return f"{self.base_url}{raw_url.rstrip('/')}/{suffix}?format=json"
 
         return None
