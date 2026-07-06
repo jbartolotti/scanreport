@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import date, timedelta
 from typing import Any
 
 from ..normalization.normalize import normalize_session
 from ..models.session import Session
 from .dicom_times import compute_session_times, compute_signature
+
+logger = logging.getLogger(__name__)
 
 
 def refresh_cache(*, client: Any, store: Any, lookback_days: int) -> dict[str, int]:
@@ -29,8 +32,20 @@ def refresh_cache(*, client: Any, store: Any, lookback_days: int) -> dict[str, i
         sessions_processed += 1
         if store.has_changed(session.session_id, signature):
             start_time, end_time, dicom_count, scan_profile = compute_session_times(session)
+            logger.debug(
+                "refresh_cache session=%s start_time_pre=%r end_time_pre=%r",
+                session.session_id,
+                start_time,
+                end_time,
+            )
             session.start_time = start_time
             session.end_time = end_time
+            logger.debug(
+                "refresh_cache session=%s start_time_post=%r end_time_post=%r",
+                session.session_id,
+                session.start_time,
+                session.end_time,
+            )
             record = {
                 "session_id": session.session_id,
                 "project_id": session.project_id,

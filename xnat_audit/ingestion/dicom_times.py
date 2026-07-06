@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from asyncio.log import logger
 import hashlib
 import json
+import logging
 from datetime import datetime, time, timedelta
 from typing import Any
 
@@ -26,6 +26,8 @@ def compute_signature(session: Session) -> str:
 
 from datetime import datetime, timedelta
 import json
+
+logger = logging.getLogger(__name__)
 
 
 def compute_session_times(
@@ -60,7 +62,7 @@ def compute_session_times(
 
 
         logger.debug(
-            "scan=%s start_time=%r frames=%r tr=%r dicom_count=%r",
+            "scan=%s start_time_pre=%r frames=%r tr=%r dicom_count=%r",
             getattr(scan, "sequence_name", None),
             getattr(scan, "start_time", None),
             getattr(scan, "frames", None),

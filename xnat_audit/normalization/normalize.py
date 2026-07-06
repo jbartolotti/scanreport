@@ -30,6 +30,11 @@ def normalize_session(raw: Mapping[str, Any]) -> Session:
         sequence_name = str(scan.get("sequence_name", "") or "")
         frames_value = scan.get("frames")
         tr_value = scan.get("tr")
+        raw_start_time = scan.get("start_time")
+        logger.debug(
+            "normalize_session start_time pre=%r",
+            raw_start_time,
+        )
         try:
             frames = float(frames_value) if frames_value not in (None, "") else None
         except (TypeError, ValueError):
@@ -46,7 +51,7 @@ def normalize_session(raw: Mapping[str, Any]) -> Session:
                 sequence_number=scan.get("sequence_number"),
                 protocol_name=scan.get("protocol_name"),
                 series_description=scan.get("series_description"),
-                start_time=coerce_datetime(scan.get("start_time")),
+                start_time=coerce_datetime(raw_start_time),
                 start_date=coerce_date(scan.get("start_date")),
                 frames=frames,
                 tr=tr,
@@ -64,6 +69,10 @@ def normalize_session(raw: Mapping[str, Any]) -> Session:
         )
         if scans:
             first_scan = scans[0]
+            logger.debug(
+                "normalize_session start_time post=%r",
+                first_scan.start_time,
+            )
             logger.debug(
                 "normalized first scan: %s",
                 {

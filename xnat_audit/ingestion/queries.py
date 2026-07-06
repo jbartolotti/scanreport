@@ -105,14 +105,20 @@ def _coerce_scans(raw: Any) -> list[dict[str, Any]]:
         data_fields = item.get("data_fields")
         if not isinstance(data_fields, dict):
             data_fields = {}
-        print(data_fields)
+
         sequence_number = _extract_data_field_value(data_fields, "ID", "id", "sequence_id")
         protocol_name = _extract_data_field_value(data_fields, "protocolName", "protocol_name")
         series_description = _extract_data_field_value(data_fields, "series_description", "seriesDescription")
-        start_time = _extract_data_field_value(data_fields, "startTime", "start_time")
+        raw_start_time = _extract_data_field_value(data_fields, "startTime", "start_time")
         start_date = _extract_data_field_value(data_fields, "start_date", "startDate")
         frames = _extract_data_field_value(data_fields, "frames")
         tr = _extract_data_field_value(data_fields, "parameters/tr", "tr")
+        coerced_start_time = coerce_datetime(raw_start_time)
+        logger.debug(
+            "_coerce_scans start_time pre=%r post=%r",
+            raw_start_time,
+            coerced_start_time,
+        )
 
         try:
             frame_value = float(frames) if frames not in (None, "") else None
@@ -124,7 +130,7 @@ def _coerce_scans(raw: Any) -> list[dict[str, Any]]:
             tr_value = None
 
         if not any(
-            [sequence_number, protocol_name, series_description, start_time, start_date, frames, tr]
+            [sequence_number, protocol_name, series_description, raw_start_time, start_date, frames, tr]
         ):
             continue
 
@@ -141,7 +147,7 @@ def _coerce_scans(raw: Any) -> list[dict[str, Any]]:
                 "sequence_number": sequence_number,
                 "protocol_name": protocol_name,
                 "series_description": series_description,
-                "start_time": start_time,
+                "start_time": coerced_start_time,
                 "start_date": coerce_date(start_date),
                 "frames": frame_value,
                 "tr": tr_value,
