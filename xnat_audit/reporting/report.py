@@ -6,7 +6,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
-from .html import render_html_report
+from .html import build_timeline_events, render_html_report
 
 
 def _resolve_week_start(report_date: date | None, report_week: date | None) -> date:
@@ -37,6 +37,8 @@ def generate_report(*, store: Any, report_date: date | None = None, report_week:
         "archive_session_count": archive_count,
         "prearchive_session_count": prearchive_count,
         "sessions": sessions,
+        "calendar_events": build_timeline_events(sessions, week_start),
+        "pixels_per_minute": 1,
     }
 
     output_path = Path.cwd() / "report.html"

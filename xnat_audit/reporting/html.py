@@ -9,6 +9,11 @@ from pathlib import Path
 from string import Template
 from typing import Any, Mapping
 
+PIXELS_PER_MINUTE = 1
+MINIMUM_MARKER_HEIGHT = 20
+OPEN_HOUR = 6
+CLOSE_HOUR = 20
+
 
 def _parse_session_datetime(value: Any) -> datetime | None:
     """Parse an ISO-style datetime string into a datetime object."""
@@ -51,68 +56,77 @@ def _event_title(session: Mapping[str, Any]) -> str:
     )
 
 
-def _render_session_event(session: Mapping[str, Any], start_dt: datetime, end_dt: datetime | None, hour: int) -> str:
-    """Render a single session block for the calendar."""
-    color_class = _session_color(session)
-    point_event = end_dt is None
-    time_text = start_dt.strftime("%H:%M")
-    if end_dt is not None and end_dt != start_dt:
-        time_text = f"{start_dt.strftime('%H:%M')}–{end_dt.strftime('%H:%M')}"
+def build_timeline_events(sessions: list[Mapping[str, Any]], week_start: date) -> list[dict[str, Any]]:
+    """Build timeline event data with absolute positioning metadata."""
+    week_end = week_start + timedelta(days=6)
+    events: list[dict[str, Any]] = []
+    for session in sessions:
+        start_dt = _parse_session_datetime(session.get("start_time"))
+        end_dt = _parse_session_datetime(session.get("end_time"))
+        if start_dt is None:
+            continue
 
-    label = escape(str(session.get("project_id") or "unknown"))
-    tooltip = escape(_event_title(session))
-    state = escape(str(session.get("state") or "unknown"))
-    event_class = "calendar-event calendar-event--point" if point_event else f"calendar-event calendar-event--{color_class}"
-    return (
-        f"<div class=\"{event_class}\" title=\"{tooltip}\">"
-        f"<span class=\"calendar-event__project\">{label}</span>"
-        f"<span class=\"calendar-event__time\">{time_text}</span>"
-        f"<span class=\"calendar-event__state\">{state}</span>"
-        f"</div>"
-    )
+        session_day = start_dt.date()
+        if not (week_start <= session_day <= week_end):
+            if end_dt is not None and week_start <= end_dt.date() <= week_end:
+                session_day = end_dt.date()
+            else:
+                continue
+
+        minutes_from_midnight = start_dt.hour * 60 + start_dt.minute
+        top = max(minutes_from_midnight - (OPEN_HOUR * 60), 0) * PIXELS_PER_MINUTE
+        if end_dt is not None and end_dt > start_dt:
+            duration_minutes = int((end_dt - start_dt).total_seconds() // 60)
+            height = max(duration_minutes, 1) * PIXELS_PER_MINUTE
+        else:
+            height = MINIMUM_MARKER_HEIGHT
+
+        if start_dt.hour >= CLOSE_HOUR:
+            continue
+        if end_dt is not None and end_dt.hour >= CLOSE_HOUR and end_dt.minute > 0:
+            height = max((CLOSE_HOUR * 60) - (start_dt.hour * 60 + start_dt.minute), 1) * PIXELS_PER_MINUTE
+
+        events.append(
+            {
+                "session_id": session.get("session_id"),
+                "project_id": session.get("project_id"),
+                "state": session.get("state"),
+                "dicom_count": session.get("dicom_count"),
+                "start_time": session.get("start_time"),
+                "end_time": session.get("end_time"),
+                "day": session_day,
+                "day_label": session_day.strftime("%a<br />%m/%d"),
+                "top": top,
+                "height": height,
+                "css_class": _session_color(session),
+                "tooltip": _event_title(session),
+                "time_label": start_dt.strftime("%H:%M"),
+            }
+        )
+    return events
 
 
-def _build_day_headers(week_start: date) -> str:
-    """Render the header cells for Monday through Sunday."""
-    headers: list[str] = []
+def _build_day_columns(week_start: date, events: list[dict[str, Any]]) -> str:
+    """Render the weekly timeline as seven day columns."""
+    columns: list[str] = []
     for offset in range(7):
         day = week_start + timedelta(days=offset)
-        headers.append(f"<th scope=\"col\">{day.strftime('%a')}<br />{day.strftime('%m/%d')}</th>")
-    return "".join(headers)
-
-
-def _build_calendar_rows(week_start: date, sessions: list[Mapping[str, Any]]) -> str:
-    """Render the calendar grid content for the chosen week."""
-    rows: list[str] = []
-    for hour in range(24):
-        cells: list[str] = []
-        for offset in range(7):
-            day = week_start + timedelta(days=offset)
-            events: list[str] = []
-            for session in sessions:
-                start_dt = _parse_session_datetime(session.get("start_time"))
-                end_dt = _parse_session_datetime(session.get("end_time"))
-                if start_dt is None and end_dt is None:
-                    continue
-                session_day = None
-                if start_dt is not None and start_dt.date() == day:
-                    session_day = start_dt.date()
-                elif end_dt is not None and end_dt.date() == day:
-                    session_day = end_dt.date()
-                if session_day != day:
-                    continue
-                if start_dt is not None and start_dt.date() == day and start_dt.hour == hour:
-                    events.append(_render_session_event(session, start_dt, end_dt, hour))
-                    continue
-                if end_dt is not None and start_dt is not None and start_dt.date() == day and start_dt.hour < hour < end_dt.hour:
-                    events.append(_render_session_event(session, start_dt, end_dt, hour))
-            cell_content = "".join(events)
-            if cell_content:
-                cells.append(f"<td class=\"calendar-cell\"><div class=\"calendar-cell__events\">{cell_content}</div></td>")
-            else:
-                cells.append("<td class=\"calendar-cell calendar-cell--empty\"></td>")
-        rows.append(f"<tr><th scope=\"row\">{hour:02d}:00</th>{''.join(cells)}</tr>")
-    return "\n".join(rows)
+        day_events = [event for event in events if event["day"] == day]
+        event_blocks: list[str] = []
+        for event in day_events:
+            label = escape(str(event.get("project_id") or "unknown"))
+            tooltip = escape(str(event.get("tooltip") or ""))
+            event_blocks.append(
+                f'<div class="calendar-event {escape(event["css_class"])}" title="{tooltip}" style="top: {event["top"]}px; height: {event["height"]}px;">'
+                f'<span class="calendar-event__project">{label}</span>'
+                f'<span class="calendar-event__time">{escape(event["time_label"])} </span>'
+                f'</div>'
+            )
+        day_label = day.strftime("%a<br />%m/%d")
+        columns.append(
+            f'<div class="day-column"><div class="day-column__header">{day_label}</div><div class="day-column__timeline">{"".join(event_blocks)}</div></div>'
+        )
+    return "\n".join(columns)
 
 
 def _read_report_asset(relative_path: str) -> str:
@@ -149,13 +163,16 @@ def render_html_report(report_data: Mapping[str, Any], title: str = "Weekly Repo
     if not isinstance(week_end, date):
         week_end = week_start + timedelta(days=6)
 
+    timeline_events = list(report_data.get("calendar_events") or [])
+    if not timeline_events:
+        timeline_events = build_timeline_events(sessions, week_start)
+
     substitutions = {
         "title": escape(title),
         "report_week": escape(f"{week_start:%Y-%m-%d} to {week_end:%Y-%m-%d}"),
         "archive_count": escape(str(report_data.get("archive_session_count", 0))),
         "prearchive_count": escape(str(report_data.get("prearchive_session_count", 0))),
         "total_count": escape(str(report_data.get("session_count", 0))),
-        "day_headers": _build_day_headers(week_start),
-        "calendar_rows": _build_calendar_rows(week_start, sessions),
+        "day_columns": _build_day_columns(week_start, timeline_events),
     }
     return Template(template_text).substitute(**substitutions)
