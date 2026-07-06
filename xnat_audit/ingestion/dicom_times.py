@@ -24,9 +24,6 @@ def compute_signature(session: Session) -> str:
     }
     return hashlib.sha1(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
-from datetime import datetime, timedelta
-import json
-
 logger = logging.getLogger(__name__)
 
 
@@ -104,14 +101,15 @@ def compute_session_times(
                     seconds=duration_seconds
                 )
             except Exception:
-                scan_end = scan_start
+                scan_end = None
 
-        elif scan_start is not None:
-            scan_end = scan_start
+        else:
+            scan_end = None
 
         profile.append(
             {
                 "sequence_id": getattr(scan, "sequence_id", None),
+                "sequence_number": getattr(scan, "sequence_number", None),
 
                 # Human-facing names
                 "series_description": getattr(
@@ -143,6 +141,7 @@ def compute_session_times(
                 ),
 
                 # Size / completeness metrics
+                "dicom_count": scan.dicom_count,
                 "file_count": scan.dicom_count,
                 "frames": frames,
                 "tr": tr,

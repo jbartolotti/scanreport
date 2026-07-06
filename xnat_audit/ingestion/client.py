@@ -543,12 +543,107 @@ class XNATClient:
             "url": str(url) if url is not None else "",
         }
 
+    def _build_prearchive_detail_url(self, row: dict[str, Any], suffix: str) -> str | None:
+        """Build a session-specific prearchive endpoint URL for scans or resources."""
+        raw_url = str(row.get("url", "") or "").strip()
+        if not raw_url:
+            return None
+
+        parsed = urlparse(raw_url)
+        if parsed.scheme and parsed.netloc:
+            base_path = parsed.path.rstrip("/")
+            return f"{parsed.scheme}://{parsed.netloc}{base_path}/{suffix}?format=json"
+
+        if raw_url.startswith("/"):
+            return f"{self.base_url}{raw_url.rstrip('/')}/{suffix}?format=json"
+
+        return None
+
+    def _fetch_prearchive_detail_payload(self, row: dict[str, Any], suffix: str) -> list[dict[str, Any]]:
+        """Fetch scan or resource entries for a prearchive session."""
+        if requests is None:
+            return []
+
+        url = self._build_prearchive_detail_url(row, suffix)
+        if not url:
+            return []
+
+        username, password = self._load_credentials()
+        session = requests.Session()
+        if username and password:
+            session.auth = (username, password)
+
+        try:
+            response = session.get(url, timeout=30)
+            response.raise_for_status()
+            payload = response.json()
+        except Exception as exc:
+            logger.debug("Prearchive %s fetch failed for %s: %s", suffix, row.get("url"), exc)
+            return []
+
+        if isinstance(payload, list):
+            return [item for item in payload if isinstance(item, dict)]
+
+        if isinstance(payload, dict):
+            result_set = payload.get("ResultSet")
+            if isinstance(result_set, dict):
+                result = result_set.get("Result")
+                if isinstance(result, list):
+                    return [item for item in result if isinstance(item, dict)]
+                if isinstance(result, dict):
+                    return [result]
+            result = payload.get("Result")
+            if isinstance(result, list):
+                return [item for item in result if isinstance(item, dict)]
+            if isinstance(result, dict):
+                return [result]
+            items = payload.get("items")
+            if isinstance(items, list):
+                return [item for item in items if isinstance(item, dict)]
+
+        return []
+
     def _build_prearchive_record(self, row: dict[str, Any]) -> dict[str, Any] | None:
         """Construct a normalized record for a surviving prearchive item."""
         if not row:
             return None
+
+        scan_rows = self._fetch_prearchive_detail_payload(row, "scans")
+        resource_rows = self._fetch_prearchive_detail_payload(row, "resources")
+
+        resource_lookup: dict[str, dict[str, Any]] = {}
+        for resource in resource_rows:
+            cat_id = self._first_non_empty(resource, ["cat_id", "catID", "CAT_ID", "id"])
+            if cat_id is None:
+                continue
+            resource_lookup[str(cat_id)] = resource
+
+        scans: list[dict[str, Any]] = []
+        for scan in scan_rows:
+            sequence_number = self._first_non_empty(scan, ["ID", "id", "sequence_id", "sequenceNumber", "sequence_number"])
+            series_description = self._first_non_empty(scan, ["series_description", "seriesDescription", "name", "label"])
+            resource = resource_lookup.get(str(sequence_number)) if sequence_number is not None else None
+            file_count = 0
+            if resource is not None:
+                file_count_value = self._first_non_empty(resource, ["file_count", "fileCount", "count"])
+                if file_count_value is not None:
+                    try:
+                        file_count = int(file_count_value)
+                    except (TypeError, ValueError):
+                        file_count = 0
+            scans.append(
+                {
+                    "sequence_name": str(series_description or sequence_number or ""),
+                    "sequence_number": str(sequence_number) if sequence_number is not None else None,
+                    "series_description": str(series_description) if series_description is not None else None,
+                    "start_date": str(row.get("scan_date", "") or ""),
+                    "start_time": str(row.get("scan_time", "") or ""),
+                    "dicom_count": file_count,
+                }
+            )
+
         return {
-            "session_id": f"prearchive:{row.get('subject', '')}:{row.get('project', '')}:{row.get('scan_date', '')}:{row.get('scan_time', '')}",
+            "session_id": str(row.get('subject', "") or ""), 
             "subject_id": str(row.get("subject", "") or ""),
             "project_id": str(row.get("project", "") or ""),
             "date": str(row.get("scan_date", "") or ""),
@@ -556,6 +651,7 @@ class XNATClient:
             "origin": "INTERNAL",
             "state": "PREARCHIVE",
             "url": str(row.get("url", "") or ""),
+            "scans": scans,
         }
 
     def _collect_scan_candidates(self, payload: Any) -> list[Any]:
