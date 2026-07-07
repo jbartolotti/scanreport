@@ -48,6 +48,7 @@ def refresh_cache(*, client: Any, store: Any, lookback_days: int) -> dict[str, i
             )
             record = {
                 "session_id": session.session_id,
+                "subject_id": session.subject_id,
                 "project_id": session.project_id,
                 "state": session.state.value,
                 "start_time": start_time.isoformat() if start_time else None,

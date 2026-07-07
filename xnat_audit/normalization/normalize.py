@@ -31,10 +31,6 @@ def normalize_session(raw: Mapping[str, Any]) -> Session:
         frames_value = scan.get("frames")
         tr_value = scan.get("tr")
         raw_start_time = scan.get("start_time")
-        logger.debug(
-            "normalize_session start_time pre=%r",
-            raw_start_time,
-        )
         try:
             frames = float(frames_value) if frames_value not in (None, "") else None
         except (TypeError, ValueError):
