@@ -58,14 +58,14 @@ def compute_session_times(
     for scan in session.scans:
 
 
-        logger.debug(
-            "scan=%s start_time_pre=%r frames=%r tr=%r dicom_count=%r",
-            getattr(scan, "sequence_name", None),
-            getattr(scan, "start_time", None),
-            getattr(scan, "frames", None),
-            getattr(scan, "tr", None),
-            getattr(scan, "dicom_count", None),
-        )
+      #  logger.debug(
+      #      "scan=%s start_time_pre=%r frames=%r tr=%r dicom_count=%r",
+      #      getattr(scan, "sequence_name", None),
+      #      getattr(scan, "start_time", None),
+      #      getattr(scan, "frames", None),
+      #      getattr(scan, "tr", None),
+      #      getattr(scan, "dicom_count", None),
+      #  )
 
 
         total_dicom_count += max(0, scan.dicom_count)
@@ -73,12 +73,12 @@ def compute_session_times(
         scan_date = coerce_date(getattr(scan, "start_date", None))
         scan_time_value = getattr(scan, "start_time", None)
         scan_time = coerce_time(scan_time_value)
-        logger.debug(
-            "Parsed start_date=%r start_time=%r -> %r",
-            getattr(scan, "start_date", None),
-            getattr(scan, "start_time", None),
-            (datetime.combine(scan_date, scan_time) if scan_date is not None and scan_time is not None else None),
-        )
+      #  logger.debug(
+      #      "Parsed start_date=%r start_time=%r -> %r",
+      #      getattr(scan, "start_date", None),
+      #      getattr(scan, "start_time", None),
+      #      (datetime.combine(scan_date, scan_time) if scan_date is not None and scan_time is not None else None),
+      #  )
         scan_start = None
         if scan_date is not None and scan_time is not None:
             scan_start = datetime.combine(scan_date, scan_time)

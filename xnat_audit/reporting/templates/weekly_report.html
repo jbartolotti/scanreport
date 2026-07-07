@@ -71,6 +71,19 @@
           if (!parsed.length) {
             return '<p class="details-panel__empty">No scan profile available</p>';
           }
+          parsed.sort(function (a, b) {
+            const aId = parseInt(
+              a.sequence_number || a.sequence_id || a.id || 999999,
+              10
+            );
+
+            const bId = parseInt(
+              b.sequence_number || b.sequence_id || b.id || 999999,
+              10
+            );
+
+            return aId - bId;
+          });
 
           return '<table class="details-panel__table">' +
             '<thead><tr><th>Sequence ID</th><th>Sequence Name</th><th>DICOM Count</th></tr></thead>' +
