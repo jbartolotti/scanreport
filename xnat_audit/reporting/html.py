@@ -253,7 +253,7 @@ def render_html_report(report_data: Mapping[str, Any], title: str = "Weekly Repo
             f'<a href="report_{next_week:%Y-%m-%d}.html">Next Week</a>'
             f'</div>'
         ),
-        "hour_labels": _build_hour_labels(),
-        "day_columns": _build_day_columns(week_start, timeline_events),
+        "timeline_hours": _build_hour_labels(),
+        "calendar_columns": _build_day_columns(week_start, timeline_events),
     }
     return Template(template_text).substitute(**substitutions)
