@@ -822,7 +822,7 @@ class XNATClient:
         scan_payload: list[dict[str, Any]] = []
         if isinstance(detail, dict):
             detail_project = detail.get("project") or detail.get("project_id")
-            detail_subject = detail.get("subject_id") or detail.get("subject")
+            detail_subject = detail.get("dcmPatientId")
             scan_payload = _coerce_scans(self._collect_scan_payload(detail))
 
         record = {

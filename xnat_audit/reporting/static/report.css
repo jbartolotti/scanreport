@@ -92,7 +92,7 @@ body {
   width: 56px;
   position: relative;
   min-height: 840px;
-  margin-top: 38px;
+  margin-top: 70px;
 }
 
 .timeline-label {
@@ -149,16 +149,17 @@ body {
 
 .calendar-event {
   position: absolute;
+  box-sizing: border-box;
   left: 6px;
   right: 6px;
-  border-radius: 6px;
-  padding: 6px 8px;
+  border-radius: 0;
+  padding: 2px 4px;
   font-size: 0.78rem;
   color: white;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  line-height: 1.2;
+  gap: 0;
+  line-height: 1;
   box-shadow: 0 2px 6px rgba(15, 23, 42, 0.14);
   cursor: pointer;
   overflow: hidden;

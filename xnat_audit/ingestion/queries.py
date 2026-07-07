@@ -242,7 +242,7 @@ def extract_archive_session(raw: Any) -> dict[str, Any] | None:
         scan_payload = _read_attribute(raw, attrs, "scans", "scan_data")
 
     record = {
-        "subject_id": str(_read_attribute(raw, attrs, "subject_id", "subject", "subjectId") or ""),
+        "subject_id": str(_read_attribute(raw, attrs, "dcmPatientId", "subject_id", "subject", "subjectId") or ""),
         "project_id": str(_read_attribute(raw, attrs, "project_id", "project", "projectId") or ""),
         "session_id": session_id,
         "date": _coerce_date(_read_attribute(raw, attrs, "date", "session_date", "xnat:subjectassessordata/date")),

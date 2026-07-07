@@ -11,7 +11,7 @@ from string import Template
 from typing import Any, Mapping
 
 PIXELS_PER_MINUTE = 1
-MINIMUM_MARKER_HEIGHT = 20
+MINIMUM_MARKER_HEIGHT = 30
 OPEN_HOUR = 6
 CLOSE_HOUR = 20
 
@@ -62,12 +62,12 @@ def _build_xnat_url(session: Mapping[str, Any], base_url: str | None = None) -> 
 
     state = str(session.get("state") or "").upper()
     if state == "ARCHIVED":
-        return f"{base}/data/experiments/{session_id}"
+        return f"{base}/data/experiments/{session_id}?format=html"
     if state == "PREARCHIVE":
         prearchive_url = str(session.get("xnat_url") or session.get("prearchive_url") or "")
         if prearchive_url:
             return prearchive_url
-        return f"{base}/data/prearchive/experiments/{session_id}"
+        return f"{base}/app/template/XDATScreen_prearchives.vm"
     return ""
 
 
@@ -180,7 +180,6 @@ def _build_day_columns(week_start: date, events: list[dict[str, Any]]) -> str:
                 f'style="top: {event["top"]}px; height: {event["height"]}px;">'
                 f'<span class="calendar-event__project">{project_id} - {subject_id}</span>'
                 f'<span class="calendar-event__time">{display_time}</span>'
-                f'<span class="calendar-event__time calendar-event__time--small">{start_label}</span>'
                 f'</div>'
             )
         day_label = day.strftime("%a<br />%m/%d")

@@ -76,7 +76,7 @@
             '<thead><tr><th>Sequence ID</th><th>Sequence Name</th><th>DICOM Count</th></tr></thead>' +
             '<tbody>' +
             parsed.map(function (row) {
-              const sequenceId = row.sequence_id || row.id || row.SequenceID || '—';
+              const sequenceId = row.sequence_number || row.sequence_id || row.id || row.SequenceID || '—';
               const sequenceName = row.sequence_name || row.name || row.sequenceName || row.SequenceName || '—';
               const dicomCount = row.dicom_count || row.dicomCount || row.count || '—';
               return '<tr><td>' + sequenceId + '</td><td>' + sequenceName + '</td><td>' + dicomCount + '</td></tr>';
