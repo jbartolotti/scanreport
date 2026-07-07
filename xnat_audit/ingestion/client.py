@@ -531,6 +531,7 @@ class XNATClient:
         uploaded = self._first_non_empty(item, ["uploaded", "Uploaded", "upload_time", "Upload Time"])
         status = self._first_non_empty(item, ["status", "Status"])
         url = self._first_non_empty(item, ["url", "URL", "uri", "URI"])
+        logger.debug("prearchive row: subject=%s", subject)
         if subject is None and project is None and scan_date is None:
             return None
         return {
@@ -681,6 +682,7 @@ class XNATClient:
                         "dicom_count": file_count,
                     }
                 )
+        logger.debug("build prearchive record: subject=%s", str(row.get("subject", "") or ""))
 
         return {
             "session_id": session_id,
@@ -824,7 +826,7 @@ class XNATClient:
             detail_project = detail.get("project") or detail.get("project_id")
             detail_subject = detail.get("dcmPatientId")
             scan_payload = _coerce_scans(self._collect_scan_payload(detail))
-
+        logger.debug("build archive record: subject=%s", detail_subject)
         record = {
             "session_id": str(experiment_id),
             "subject_id": str(detail_subject) if detail_subject is not None else "",

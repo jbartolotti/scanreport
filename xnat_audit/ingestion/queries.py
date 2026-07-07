@@ -240,7 +240,7 @@ def extract_archive_session(raw: Any) -> dict[str, Any] | None:
     scan_payload = _extract_scan_items(raw) if isinstance(raw, dict) else None
     if scan_payload is None:
         scan_payload = _read_attribute(raw, attrs, "scans", "scan_data")
-
+    logger.debug("extract archive session: subject=%s",  str(_read_attribute(raw, attrs, "dcmPatientId", "subject_id", "subject", "subjectId") or ""))
     record = {
         "subject_id": str(_read_attribute(raw, attrs, "dcmPatientId", "subject_id", "subject", "subjectId") or ""),
         "project_id": str(_read_attribute(raw, attrs, "project_id", "project", "projectId") or ""),
@@ -279,6 +279,7 @@ def extract_prearchive_session(raw: Any) -> dict[str, Any] | None:
     if scan_payload is None:
         scan_payload = _read_attribute(raw, attrs, "scans", "scan_data")
 
+    logger.debug("extract prearchive session: subject=%s",  str(_read_attribute(raw, attrs, "subject_id", "subject", "subjectId") or ""))
     record = {
         "subject_id": str(_read_attribute(raw, attrs, "subject_id", "subject", "subjectId") or ""),
         "project_id": str(_read_attribute(raw, attrs, "project_id", "project", "projectId") or ""),
