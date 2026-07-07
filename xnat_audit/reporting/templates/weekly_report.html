@@ -10,6 +10,7 @@
     <main class="report-shell">
       <header class="summary-panel">
         <div class="summary-panel__title">$title</div>
+        <div class="week-nav-wrapper">$week_navigation</div>
         <div class="summary-grid">
           <div class="summary-card">
             <span class="summary-card__label">Report week</span>
@@ -31,10 +32,102 @@
       </header>
 
       <section class="calendar-panel">
-        <div class="timeline-grid">
-          $day_columns
+        <div class="calendar-layout">
+          <div class="calendar-stage">
+            <div class="timeline-axis">$timeline_hours</div>
+            <div class="timeline-grid">$calendar_columns</div>
+          </div>
+          <aside class="details-panel">
+            <h2>Session Details</h2>
+            <div id="details-content" class="details-panel__content">Click a session to view details</div>
+            <button id="xnat-open-button" class="details-panel__button" type="button" disabled>Open in XNAT</button>
+          </aside>
         </div>
       </section>
     </main>
+    <script>
+      document.addEventListener('DOMContentLoaded', function () {
+        const eventElements = Array.from(document.querySelectorAll('.calendar-event'));
+        const detailsContent = document.getElementById('details-content');
+        const xnatButton = document.getElementById('xnat-open-button');
+
+        function formatValue(value) {
+          return value ? String(value) : '—';
+        }
+
+        function renderScanProfile(profileValue) {
+          if (!profileValue) {
+            return '<p class="details-panel__empty">No scan profile available</p>';
+          }
+
+          let parsed = [];
+          try {
+            const candidate = JSON.parse(profileValue);
+            parsed = Array.isArray(candidate) ? candidate : candidate ? [candidate] : [];
+          } catch (error) {
+            return '<p class="details-panel__empty">No scan profile available</p>';
+          }
+
+          if (!parsed.length) {
+            return '<p class="details-panel__empty">No scan profile available</p>';
+          }
+
+          return '<table class="details-panel__table">' +
+            '<thead><tr><th>Sequence ID</th><th>Sequence Name</th><th>DICOM Count</th></tr></thead>' +
+            '<tbody>' +
+            parsed.map(function (row) {
+              const sequenceId = row.sequence_id || row.id || row.SequenceID || '—';
+              const sequenceName = row.sequence_name || row.name || row.sequenceName || row.SequenceName || '—';
+              const dicomCount = row.dicom_count || row.dicomCount || row.count || '—';
+              return '<tr><td>' + sequenceId + '</td><td>' + sequenceName + '</td><td>' + dicomCount + '</td></tr>';
+            }).join('') +
+            '</tbody></table>';
+        }
+
+        function populateDetails(eventElement) {
+          const dataset = eventElement.dataset;
+          const subjectId = formatValue(dataset.subjectId);
+          const projectId = formatValue(dataset.projectId);
+          const state = formatValue(dataset.state);
+          const startTime = formatValue(dataset.startTime);
+          const endTime = formatValue(dataset.endTime);
+          const dicomCount = formatValue(dataset.dicomCount);
+          const scanProfile = renderScanProfile(dataset.scanProfile);
+          const sessionId = formatValue(dataset.sessionId);
+
+          detailsContent.innerHTML = [
+            '<div class="details-panel__row"><strong>Session ID</strong><span>' + sessionId + '</span></div>',
+            '<div class="details-panel__row"><strong>Project ID</strong><span>' + projectId + '</span></div>',
+            '<div class="details-panel__row"><strong>Subject ID</strong><span>' + subjectId + '</span></div>',
+            '<div class="details-panel__row"><strong>State</strong><span>' + state + '</span></div>',
+            '<div class="details-panel__row"><strong>Start Time</strong><span>' + startTime + '</span></div>',
+            '<div class="details-panel__row"><strong>End Time</strong><span>' + endTime + '</span></div>',
+            '<div class="details-panel__row"><strong>DICOM Count</strong><span>' + dicomCount + '</span></div>',
+            '<div class="details-panel__row details-panel__row--stacked"><strong>Scan Profile</strong><div class="details-panel__table-wrap">' + scanProfile + '</div></div>'
+          ].join('');
+
+          xnatButton.disabled = !dataset.xnatUrl;
+          xnatButton.onclick = function () {
+            if (dataset.xnatUrl) {
+              window.open(dataset.xnatUrl, '_blank', 'noopener,noreferrer');
+            }
+          };
+        }
+
+        eventElements.forEach(function (eventElement) {
+          eventElement.addEventListener('click', function () {
+            eventElements.forEach(function (other) {
+              other.classList.remove('selected');
+            });
+            eventElement.classList.add('selected');
+            populateDetails(eventElement);
+          });
+        });
+
+        if (eventElements.length) {
+          eventElements[0].click();
+        }
+      });
+    </script>
   </body>
 </html>

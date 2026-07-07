@@ -105,7 +105,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             except ValueError:
                 print(f"[xnat_audit] Invalid report week anchor: {args.report_week}")
                 return 1
-        report = generate_report(store=store, report_date=report_date, report_week=report_week)
+        report = generate_report(store=store, report_date=report_date, report_week=report_week, xnat_url=settings.xnat_url)
         print(f"[xnat_audit] Generated report with {report['session_count']} session(s)")
         logger.info("Generated report with %d session(s)", report["session_count"])
         return 0

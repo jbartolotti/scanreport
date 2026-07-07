@@ -22,7 +22,7 @@ def _resolve_week_start(report_date: date | None, report_week: date | None) -> d
     return target_date - timedelta(days=target_date.weekday())
 
 
-def generate_report(*, store: Any, report_date: date | None = None, report_week: date | None = None) -> dict[str, Any]:
+def generate_report(*, store: Any, report_date: date | None = None, report_week: date | None = None, xnat_url: str | None = None) -> dict[str, Any]:
     """Generate a weekly HTML report from the local session registry."""
     if report_date is None:
         report_date = date.today()
@@ -42,8 +42,9 @@ def generate_report(*, store: Any, report_date: date | None = None, report_week:
         "archive_session_count": archive_count,
         "prearchive_session_count": prearchive_count,
         "sessions": sessions,
-        "calendar_events": build_timeline_events(sessions, week_start),
+        "calendar_events": build_timeline_events(sessions, week_start, xnat_url),
         "pixels_per_minute": 1,
+        "xnat_url": xnat_url,
     }
 
     output_dir = Path.cwd()

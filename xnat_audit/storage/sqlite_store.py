@@ -76,6 +76,7 @@ class SessionTimeStore:
                         """
                         CREATE TABLE IF NOT EXISTS session_times (
                             session_id TEXT PRIMARY KEY,
+                            subject_id TEXT,
                             project_id TEXT,
                             state TEXT,
                             start_time TEXT,
@@ -104,7 +105,7 @@ class SessionTimeStore:
     def get(self, session_id: str) -> dict[str, Any] | None:
         """Return the cached record for a session if one exists."""
         row = self.connection.execute(
-            "SELECT session_id, project_id, state, start_time, end_time, dicom_count, scan_profile, signature, last_checked FROM session_times WHERE session_id = ?",
+            "SELECT session_id, subject_id, project_id, state, start_time, end_time, dicom_count, scan_profile, signature, last_checked FROM session_times WHERE session_id = ?",
             (session_id,),
         ).fetchone()
         return dict(row) if row is not None else None
@@ -112,7 +113,7 @@ class SessionTimeStore:
     def list_all(self) -> list[dict[str, Any]]:
         """Return all cached session records."""
         rows = self.connection.execute(
-            "SELECT session_id, project_id, state, start_time, end_time, dicom_count, scan_profile, signature, last_checked FROM session_times ORDER BY start_time, end_time"
+            "SELECT session_id, subject_id, project_id, state, start_time, end_time, dicom_count, scan_profile, signature, last_checked FROM session_times ORDER BY start_time, end_time"
         ).fetchall()
         return [dict(row) for row in rows]
 
@@ -120,7 +121,7 @@ class SessionTimeStore:
         """Return cached sessions that occur on the supplied report date."""
         target = report_date.strftime("%Y-%m-%d")
         rows = self.connection.execute(
-            "SELECT session_id, project_id, state, start_time, end_time, dicom_count, scan_profile, signature, last_checked FROM session_times WHERE (start_time LIKE ? OR end_time LIKE ?) ORDER BY start_time, end_time",
+            "SELECT session_id, subject_id, project_id, state, start_time, end_time, dicom_count, scan_profile, signature, last_checked FROM session_times WHERE (start_time LIKE ? OR end_time LIKE ?) ORDER BY start_time, end_time",
             (f"{target}%", f"{target}%"),
         ).fetchall()
         return [dict(row) for row in rows]
@@ -149,9 +150,10 @@ class SessionTimeStore:
             self.connection.execute(
                 """
                 INSERT INTO session_times (
-                    session_id, project_id, state, start_time, end_time, dicom_count, scan_profile, signature, last_checked
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    session_id, subject_id, project_id, state, start_time, end_time, dicom_count, scan_profile, signature, last_checked
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session_id) DO UPDATE SET
+                    subject_id = excluded.subject_id,
                     project_id = excluded.project_id,
                     state = excluded.state,
                     start_time = excluded.start_time,
@@ -163,6 +165,7 @@ class SessionTimeStore:
                 """,
                 (
                     record["session_id"],
+                    record.get("subject_id"),
                     record.get("project_id"),
                     record.get("state"),
                     record.get("start_time"),
