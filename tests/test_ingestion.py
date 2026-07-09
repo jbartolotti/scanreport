@@ -13,6 +13,7 @@ from xnat_audit.normalization.normalize import normalize_session
 from xnat_audit.models.enums import SessionOrigin, SessionState
 from xnat_audit.models.scan import Scan
 from xnat_audit.models.session import Session
+from xnat_audit.reporting.report import generate_report, regenerate_dirty_reports
 from xnat_audit.storage.sqlite_store import SessionTimeStore
 from xnat_audit.utils import coerce_date
 
@@ -64,6 +65,61 @@ class IngestionWorkflowTests(unittest.TestCase):
                 }
             )
             self.assertFalse(store.has_changed(session.session_id, signature))
+            store.close()
+
+    def test_signature_changes_when_state_changes(self) -> None:
+        prearchive_session = Session(
+            subject_id="SUBJ2",
+            project_id="PROJ2",
+            session_id="SESSION2",
+            date=date(2026, 6, 29),
+            origin=SessionOrigin.INTERNAL,
+            state=SessionState.PREARCHIVE,
+            scans=[Scan(sequence_name="T2", normalized_name="t2", dicom_count=10)],
+        )
+        archived_session = Session(
+            subject_id="SUBJ2",
+            project_id="PROJ2",
+            session_id="SESSION2",
+            date=date(2026, 6, 29),
+            origin=SessionOrigin.INTERNAL,
+            state=SessionState.ARCHIVED,
+            scans=[Scan(sequence_name="T2", normalized_name="t2", dicom_count=10)],
+        )
+
+        self.assertNotEqual(compute_signature(prearchive_session), compute_signature(archived_session))
+
+    def test_dirty_week_tracking_and_report_output_naming(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = str(Path(tmp_dir) / "session_times.db")
+            store = SessionTimeStore(db_path)
+            week_start = date(2026, 6, 22)
+            store.mark_dirty_week(week_start, reason="signature_changed")
+            self.assertEqual(store.list_dirty_weeks(), [(week_start, "signature_changed")])
+
+            generate_report(
+                store=store,
+                report_week=week_start,
+                output_path=str(Path(tmp_dir) / "report_2026-06-22.html"),
+            )
+            self.assertTrue(Path(tmp_dir, "report_2026-06-22.html").exists())
+            store.clear_dirty_week(week_start)
+            self.assertEqual(store.list_dirty_weeks(), [])
+
+            store.close()
+
+    def test_regenerate_dirty_reports_processes_dirty_weeks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = str(Path(tmp_dir) / "session_times.db")
+            store = SessionTimeStore(db_path)
+            week_start = date(2026, 6, 22)
+            store.mark_dirty_week(week_start, reason="new_session")
+
+            generated = regenerate_dirty_reports(store=store, output_dir=Path(tmp_dir))
+
+            self.assertEqual(generated, [week_start])
+            self.assertEqual(store.list_dirty_weeks(), [])
+            self.assertTrue(Path(tmp_dir, "report_2026-06-22.html").exists())
             store.close()
 
     def test_coerce_date_handles_multiple_common_formats(self) -> None:
@@ -191,9 +247,13 @@ class IngestionWorkflowTests(unittest.TestCase):
         class FakeStore:
             def __init__(self) -> None:
                 self.records: list[dict[str, object]] = []
+                self.dirty_weeks: list[tuple[date, str]] = []
 
-            def has_changed(self, session_id: str, signature: str) -> bool:
-                return True
+            def get_signature(self, session_id: str) -> str | None:
+                return None
+
+            def mark_dirty_week(self, week_start: date, reason: str) -> None:
+                self.dirty_weeks.append((week_start, reason))
 
             def mark_checked(self, session_id: str) -> None:
                 return None
@@ -208,6 +268,45 @@ class IngestionWorkflowTests(unittest.TestCase):
         self.assertIn("scan_profile", store.records[0])
         self.assertIsInstance(store.records[0]["scan_profile"], str)
         self.assertNotEqual(store.records[0]["scan_profile"], "")
+        self.assertEqual(store.dirty_weeks, [(date(2026, 6, 29), "new_session")])
+
+    def test_refresh_cache_marks_dirty_week_for_signature_change(self) -> None:
+        class FakeStore:
+            def __init__(self) -> None:
+                self.dirty_weeks: list[tuple[date, str]] = []
+
+            def get_signature(self, session_id: str) -> str | None:
+                return "old-signature"
+
+            def mark_dirty_week(self, week_start: date, reason: str) -> None:
+                self.dirty_weeks.append((week_start, reason))
+
+            def mark_checked(self, session_id: str) -> None:
+                return None
+
+            def upsert(self, record: dict[str, object]) -> None:
+                return None
+
+        class FakeClient:
+            def get_archive_sessions(self, start_date: str, end_date: str) -> list[dict[str, object]]:
+                return [
+                    {
+                        "session_id": "SESSION_SIGNATURE",
+                        "subject_id": "SUBJ_SIG",
+                        "project_id": "PROJ_SIG",
+                        "date": "2026-06-30",
+                        "state": "ARCHIVED",
+                        "scans": [],
+                    }
+                ]
+
+            def get_prearchive_sessions(self, start_date: str, end_date: str) -> list[dict[str, object]]:
+                return []
+
+        store = FakeStore()
+        refresh_cache(client=FakeClient(), store=store, lookback_days=1)
+
+        self.assertEqual(store.dirty_weeks, [(date(2026, 6, 29), "signature_changed")])
 
     def test_extract_archive_session_handles_eattrs_like_values(self) -> None:
         class Attrs:

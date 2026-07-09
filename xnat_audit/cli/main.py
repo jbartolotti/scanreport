@@ -12,7 +12,7 @@ from typing import Sequence
 from ..config.config import load_settings
 from ..ingestion.client import XNATClient
 from ..ingestion.refresh import refresh_cache
-from ..reporting.report import generate_report
+from ..reporting.report import generate_report, regenerate_dirty_reports
 from ..storage.sqlite_store import SessionTimeStore
 
 logger = logging.getLogger("xnat_audit")
@@ -41,7 +41,7 @@ def configure_logging(verbose: bool = False, quiet: bool = False) -> None:
 def build_parser() -> argparse.ArgumentParser:
     """Create the CLI argument parser for refresh and report workflows."""
     parser = argparse.ArgumentParser(prog="python -m xnat_audit")
-    parser.add_argument("command", nargs="?", choices=["refresh", "report"], default=None, help="Workflow to run")
+    parser.add_argument("command", nargs="?", choices=["refresh", "report", "update-reports"], default=None, help="Workflow to run")
     parser.add_argument("config_path", nargs="?", default=None, help="Path to a JSON config file (defaults to ./config.json)")
     parser.add_argument("--date", dest="report_date", default=None, help="Report date for the report workflow (YYYY-MM-DD)")
     parser.add_argument("--week", dest="report_week", default=None, help="Report week anchor for the report workflow (YYYY-MM-DD)")
@@ -89,6 +89,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         logger.exception("SQLite initialization failed for %s", db_path)
         print("[xnat_audit] Close other processes using the database and retry, or remove the stale DB file if appropriate.")
         return 1
+
+    if command == "update-reports":
+        generated = regenerate_dirty_reports(store=store, xnat_url=settings.xnat_url, output_dir=Path.cwd())
+        print(f"[xnat_audit] Regenerated {len(generated)} dirty report week(s)")
+        logger.info("Regenerated %d dirty report week(s)", len(generated))
+        return 0
 
     if command == "report":
         report_date = None

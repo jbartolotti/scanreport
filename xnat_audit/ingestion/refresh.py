@@ -13,6 +13,13 @@ from .dicom_times import compute_session_times, compute_signature
 logger = logging.getLogger(__name__)
 
 
+def _week_start_for_date(value: date | None) -> str | None:
+    """Return the Monday-based week anchor for a date."""
+    if value is None:
+        return None
+    return (value - timedelta(days=value.weekday())).isoformat()
+
+
 def refresh_cache(*, client: Any, store: Any, lookback_days: int) -> dict[str, int]:
     """Refresh the local session registry from XNAT archives and prearchives."""
     today = date.today()
@@ -28,9 +35,17 @@ def refresh_cache(*, client: Any, store: Any, lookback_days: int) -> dict[str, i
 
     for raw in [*archive_records, *prearchive_records]:
         session = normalize_session(raw)
-        signature = compute_signature(session)
+        new_signature = compute_signature(session)
+        old_signature = store.get_signature(session.session_id)
         sessions_processed += 1
-        if store.has_changed(session.session_id, signature):
+        changed = old_signature is None or old_signature != new_signature
+        if changed:
+            reason = "new_session" if old_signature is None else "signature_changed"
+            week_start = _week_start_for_date(session.date)
+            if week_start is not None:
+                store.mark_dirty_week(week_start, reason)
+
+        if changed:
             start_time, end_time, dicom_count, scan_profile = compute_session_times(session)
             logger.debug(
                 "refresh_cache session=%s start_time_pre=%r end_time_pre=%r",
@@ -53,9 +68,11 @@ def refresh_cache(*, client: Any, store: Any, lookback_days: int) -> dict[str, i
                 "state": session.state.value,
                 "start_time": start_time.isoformat() if start_time else None,
                 "end_time": end_time.isoformat() if end_time else None,
+                "insert_date": session.insert_date.isoformat() if session.insert_date else None,
+                "week_start": _week_start_for_date(session.date),
                 "dicom_count": dicom_count,
                 "scan_profile": scan_profile,
-                "signature": signature,
+                "signature": new_signature,
                 "last_checked": date.today().isoformat(),
             }
             store.upsert(record)

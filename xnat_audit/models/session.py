@@ -20,6 +20,7 @@ class Session:
     date: date
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
+    insert_date: Optional[date] = None
     origin: SessionOrigin = SessionOrigin.INTERNAL
     state: SessionState = SessionState.PREARCHIVE
     scans: list[Scan] = field(default_factory=list)

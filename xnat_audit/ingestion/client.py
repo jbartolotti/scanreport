@@ -150,12 +150,8 @@ class XNATClient:
             surviving_rows: list[dict[str, Any]] = []
 
             for row in experiment_rows:
-                row_date = coerce_date(str(row.get("date", "")) if row.get("date") is not None else None)
-                if row_date is None:
-                    continue
-                if row_date < lookback_cutoff:
-                    continue
-                surviving_rows.append(row)
+                if self._session_is_recent(row, lookback_cutoff):
+                    surviving_rows.append(row)
 
             processed_rows: list[dict[str, Any]] = []
             fully_processed_count = 0
@@ -337,7 +333,7 @@ class XNATClient:
             session.auth = (username, password)
 
         params = {
-            "columns": "ID,project,label,date",
+            "columns": "ID,project,label,date,insert_date",
             "format": "csv",
             "xsiType": "xnat:mrSessionData",
         }
@@ -372,11 +368,13 @@ class XNATClient:
         project = self._first_non_empty(raw_row, ["project", "Project", "project_id", "Project ID"])
         label = self._first_non_empty(raw_row, ["label", "Label"])
         date_value = self._first_non_empty(raw_row, ["date", "Date", "session_date", "Session Date"])
+        insert_date_value = self._first_non_empty(raw_row, ["insert_date", "insertDate", "Insert Date"])
         return {
             "id": str(row_id),
             "project": str(project) if project is not None else "",
             "label": str(label) if label is not None else "",
             "date": str(date_value) if date_value is not None else "",
+            "insert_date": str(insert_date_value) if insert_date_value is not None else "",
         }
 
     def _first_non_empty(self, row: dict[str, Any], names: list[str]) -> Any | None:
@@ -403,6 +401,7 @@ class XNATClient:
                 "project": str(item.get("project", "") or item.get("project_id", "") or ""),
                 "label": str(item.get("label", "") or ""),
                 "date": str(item.get("date", "") or ""),
+                "insert_date": str(item.get("insert_date", "") or item.get("insertDate", "") or ""),
             }
 
         attrs = getattr(item, "attrs", None)
@@ -431,6 +430,7 @@ class XNATClient:
                 "project": str(project) if project is not None else "",
                 "label": str(label) if label is not None else "",
                 "date": str(date_value) if date_value is not None else "",
+                "insert_date": "",
             }
 
         record_id = getattr(item, "id", None)
@@ -441,6 +441,7 @@ class XNATClient:
             "project": "",
             "label": "",
             "date": "",
+            "insert_date": "",
         }
 
     def _fetch_prearchive_metadata(
@@ -835,6 +836,7 @@ class XNATClient:
             "subject_id": str(detail_subject) if detail_subject is not None else "",
             "project_id": str(detail_project or row.get("project", "")),
             "date": str(row.get("date", "") or ""),
+            "insert_date": str(row.get("insert_date", "") or ""),
             "label": str(row.get("label", "") or ""),
             "origin": "INTERNAL",
             "state": "ARCHIVED",
@@ -846,6 +848,16 @@ class XNATClient:
             if scan_payload:
                 logger.debug("Archive record %s first scan=%s", experiment_id, scan_payload[0])
         return record
+
+    def _session_is_recent(self, row: dict[str, Any], lookback_cutoff: date) -> bool:
+        """Return True when either the scan date or insert date indicates a recent session."""
+        row_date = coerce_date(str(row.get("date", "")) if row.get("date") is not None else None)
+        insert_date = coerce_date(str(row.get("insert_date", "")) if row.get("insert_date") is not None else None)
+        if row_date is not None and row_date >= lookback_cutoff:
+            return True
+        if insert_date is not None and insert_date >= lookback_cutoff:
+            return True
+        return False
 
     def _read_project_id(self, project: Any) -> str:
         """Best-effort extraction of a project identifier from a project container."""

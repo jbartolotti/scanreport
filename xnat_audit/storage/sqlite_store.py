@@ -66,7 +66,7 @@ class SessionTimeStore:
         raise sqlite3.OperationalError("Unable to open SQLite connection")
 
     def initialize(self) -> None:
-        """Create the backing table if it does not already exist."""
+        """Create the backing tables if they do not already exist."""
         logger.info("Initializing schema for %s", self.db_path)
         for attempt in range(1, 4):
             try:
@@ -81,6 +81,8 @@ class SessionTimeStore:
                             state TEXT,
                             start_time TEXT,
                             end_time TEXT,
+                            insert_date TEXT,
+                            week_start TEXT,
                             dicom_count INTEGER,
                             scan_profile TEXT,
                             signature TEXT,
@@ -88,6 +90,26 @@ class SessionTimeStore:
                         )
                         """
                     )
+                    self.connection.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS dirty_reports (
+                            week_start TEXT PRIMARY KEY,
+                            reason TEXT,
+                            marked_at TEXT
+                        )
+                        """
+                    )
+                    self.connection.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS report_inventory (
+                            week_start TEXT PRIMARY KEY,
+                            output_path TEXT,
+                            last_generated TEXT
+                        )
+                        """
+                    )
+                    self._ensure_column("session_times", "insert_date", "TEXT")
+                    self._ensure_column("session_times", "week_start", "TEXT")
                 self._log_step("AFTER CREATE TABLE execute", attempt)
 
                 self._log_step("BEFORE commit", attempt)
@@ -105,7 +127,7 @@ class SessionTimeStore:
     def get(self, session_id: str) -> dict[str, Any] | None:
         """Return the cached record for a session if one exists."""
         row = self.connection.execute(
-            "SELECT session_id, subject_id, project_id, state, start_time, end_time, dicom_count, scan_profile, signature, last_checked FROM session_times WHERE session_id = ?",
+            "SELECT session_id, subject_id, project_id, state, start_time, end_time, insert_date, week_start, dicom_count, scan_profile, signature, last_checked FROM session_times WHERE session_id = ?",
             (session_id,),
         ).fetchone()
         return dict(row) if row is not None else None
@@ -113,7 +135,7 @@ class SessionTimeStore:
     def list_all(self) -> list[dict[str, Any]]:
         """Return all cached session records."""
         rows = self.connection.execute(
-            "SELECT session_id, subject_id, project_id, state, start_time, end_time, dicom_count, scan_profile, signature, last_checked FROM session_times ORDER BY start_time, end_time"
+            "SELECT session_id, subject_id, project_id, state, start_time, end_time, insert_date, week_start, dicom_count, scan_profile, signature, last_checked FROM session_times ORDER BY start_time, end_time"
         ).fetchall()
         return [dict(row) for row in rows]
 
@@ -121,7 +143,7 @@ class SessionTimeStore:
         """Return cached sessions that occur on the supplied report date."""
         target = report_date.strftime("%Y-%m-%d")
         rows = self.connection.execute(
-            "SELECT session_id, subject_id, project_id, state, start_time, end_time, dicom_count, scan_profile, signature, last_checked FROM session_times WHERE (start_time LIKE ? OR end_time LIKE ?) ORDER BY start_time, end_time",
+            "SELECT session_id, subject_id, project_id, state, start_time, end_time, insert_date, week_start, dicom_count, scan_profile, signature, last_checked FROM session_times WHERE (start_time LIKE ? OR end_time LIKE ?) ORDER BY start_time, end_time",
             (f"{target}%", f"{target}%"),
         ).fetchall()
         return [dict(row) for row in rows]
@@ -132,6 +154,15 @@ class SessionTimeStore:
         rows = self.list_all()
         filtered: list[dict[str, Any]] = []
         for row in rows:
+            stored_week = row.get("week_start")
+            if stored_week:
+                try:
+                    parsed_week = date.fromisoformat(str(stored_week))
+                except ValueError:
+                    parsed_week = None
+                if parsed_week == week_start:
+                    filtered.append(row)
+                    continue
             for field in (row.get("start_time"), row.get("end_time")):
                 if not field:
                     continue
@@ -150,14 +181,16 @@ class SessionTimeStore:
             self.connection.execute(
                 """
                 INSERT INTO session_times (
-                    session_id, subject_id, project_id, state, start_time, end_time, dicom_count, scan_profile, signature, last_checked
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    session_id, subject_id, project_id, state, start_time, end_time, insert_date, week_start, dicom_count, scan_profile, signature, last_checked
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session_id) DO UPDATE SET
                     subject_id = excluded.subject_id,
                     project_id = excluded.project_id,
                     state = excluded.state,
                     start_time = excluded.start_time,
                     end_time = excluded.end_time,
+                    insert_date = excluded.insert_date,
+                    week_start = excluded.week_start,
                     dicom_count = excluded.dicom_count,
                     scan_profile = excluded.scan_profile,
                     signature = excluded.signature,
@@ -170,6 +203,8 @@ class SessionTimeStore:
                     record.get("state"),
                     record.get("start_time"),
                     record.get("end_time"),
+                    record.get("insert_date"),
+                    record.get("week_start"),
                     record.get("dicom_count"),
                     record.get("scan_profile"),
                     record.get("signature"),
@@ -184,12 +219,63 @@ class SessionTimeStore:
             return True
         return cached.get("signature") != signature
 
+    def get_signature(self, session_id: str) -> str | None:
+        """Return the cached signature for a session if present."""
+        row = self.connection.execute(
+            "SELECT signature FROM session_times WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return row[0]
+
     def mark_checked(self, session_id: str) -> None:
         """Update the last_checked timestamp without changing the cached payload."""
         with self.connection:
             self.connection.execute(
                 "UPDATE session_times SET last_checked = ? WHERE session_id = ?",
                 (self._now(), session_id),
+            )
+
+    def mark_dirty_week(self, week_start: date | str, reason: str) -> None:
+        """Mark a week as dirty so its report can be regenerated."""
+        normalized_week = self._normalize_week_start(week_start)
+        if normalized_week is None:
+            return
+        with self.connection:
+            self.connection.execute(
+                "INSERT OR REPLACE INTO dirty_reports (week_start, reason, marked_at) VALUES (?, ?, ?)",
+                (normalized_week, reason, self._now()),
+            )
+
+    def list_dirty_weeks(self) -> list[tuple[date, str]]:
+        """Return the weeks that still need report regeneration."""
+        rows = self.connection.execute(
+            "SELECT week_start, reason FROM dirty_reports ORDER BY week_start"
+        ).fetchall()
+        return [
+            (self._parse_date(row[0]), row[1])
+            for row in rows
+            if self._parse_date(row[0]) is not None
+        ]
+
+    def clear_dirty_week(self, week_start: date | str) -> None:
+        """Clear the dirty flag for a week after a successful report generation."""
+        normalized_week = self._normalize_week_start(week_start)
+        if normalized_week is None:
+            return
+        with self.connection:
+            self.connection.execute("DELETE FROM dirty_reports WHERE week_start = ?", (normalized_week,))
+
+    def record_report_generation(self, week_start: date | str, output_path: str) -> None:
+        """Record the report artifact path for a generated report week."""
+        normalized_week = self._normalize_week_start(week_start)
+        if normalized_week is None:
+            return
+        with self.connection:
+            self.connection.execute(
+                "INSERT OR REPLACE INTO report_inventory (week_start, output_path, last_generated) VALUES (?, ?, ?)",
+                (normalized_week, output_path, self._now()),
             )
 
     def close(self) -> None:
@@ -237,6 +323,34 @@ class SessionTimeStore:
             operation,
             traceback.format_exc(),
         )
+
+    def _ensure_column(self, table_name: str, column_name: str, column_type: str) -> None:
+        """Add a column to an existing table if it is missing."""
+        columns = [row[1] for row in self.connection.execute(f"PRAGMA table_info({table_name})")]
+        if column_name in columns:
+            return
+        self.connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+
+    def _normalize_week_start(self, week_start: date | str) -> str | None:
+        """Normalize a week-start value to an ISO date string."""
+        if isinstance(week_start, date):
+            return week_start.strftime("%Y-%m-%d")
+        if isinstance(week_start, str):
+            try:
+                parsed = date.fromisoformat(week_start)
+            except ValueError:
+                return None
+            return parsed.strftime("%Y-%m-%d")
+        return None
+
+    def _parse_date(self, value: str | None) -> date | None:
+        """Parse an ISO date string into a date object."""
+        if not value:
+            return None
+        try:
+            return date.fromisoformat(str(value))
+        except ValueError:
+            return None
 
     def _now(self) -> str:
         import datetime as dt

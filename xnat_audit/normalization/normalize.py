@@ -89,6 +89,7 @@ def normalize_session(raw: Mapping[str, Any]) -> Session:
         project_id=str(raw.get("project_id", "")),
         session_id=str(raw.get("session_id", "")),
         date=parsed_date,
+        insert_date=coerce_date(raw.get("insert_date")),
         origin=SessionOrigin(str(raw.get("origin", SessionOrigin.INTERNAL.value)).upper()),
         state=SessionState(str(raw.get("state", SessionState.PREARCHIVE.value)).upper()),
         scans=scans,

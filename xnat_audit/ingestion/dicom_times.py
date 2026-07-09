@@ -13,10 +13,12 @@ from ..utils import coerce_date, coerce_time
 
 
 def compute_signature(session: Session) -> str:
-    """Create a deterministic signature from scan names and DICOM counts."""
+    """Create a deterministic signature from stateful session metadata and scan contents."""
     payload = {
         "session_id": session.session_id,
         "project_id": session.project_id,
+        "subject_id": session.subject_id,
+        "state": session.state.value if hasattr(session.state, "value") else str(session.state),
         "scans": [
             {"sequence_name": scan.sequence_name, "dicom_count": scan.dicom_count}
             for scan in session.scans
